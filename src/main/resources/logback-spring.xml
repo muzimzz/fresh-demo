@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <!-- ================================================================
+         로컬/개발: 사람이 읽기 좋은 콘솔 포맷 + MDC(traceId 등) 노출
+         ================================================================ -->
+    <springProfile name="local">
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>
+                    %d{yyyy-MM-dd HH:mm:ss.SSS} %highlight(%-5level) [%thread] [%X{traceId:-}] %X{method:-} %X{uri:-} %cyan(%logger{36}) - %msg%n
+                </pattern>
+            </encoder>
+        </appender>
+
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+
+    <!-- ================================================================
+         프로덕션: JSON 구조화 로그 (ELK / Loki / CloudWatch 수집용)
+         의존성: net.logstash.logback:logstash-logback-encoder:8.0
+         - MDC 필드(traceId, method, uri, clientIp)가 JSON 키로 자동 포함
+         - AsyncAppender 로 로깅 I/O 가 요청 스레드를 블로킹하지 않게 함
+         ================================================================ -->
+    <springProfile name="prod">
+        <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+                <includeMdcKeyName>traceId</includeMdcKeyName>
+                <includeMdcKeyName>method</includeMdcKeyName>
+                <includeMdcKeyName>uri</includeMdcKeyName>
+                <includeMdcKeyName>clientIp</includeMdcKeyName>
+                <!-- 스택트레이스 폭주 방지: 프레임/길이 제한 + 패키지 축약 -->
+                <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+                    <maxDepthPerThrowable>30</maxDepthPerThrowable>
+                    <maxLength>8192</maxLength>
+                    <shortenedClassNameLength>36</shortenedClassNameLength>
+                    <rootCauseFirst>true</rootCauseFirst>
+                    <exclude>^jdk\.internal\..*</exclude>
+                    <exclude>^java\.lang\.reflect\..*</exclude>
+                    <exclude>^org\.springframework\.web\.filter\..*</exclude>
+                    <exclude>^jakarta\.servlet\..*</exclude>
+                </throwableConverter>
+                <customFields>{"service":"fresh-demo"}</customFields>
+            </encoder>
+        </appender>
+
+        <appender name="ASYNC_JSON" class="ch.qos.logback.classic.AsyncAppender">
+            <appender-ref ref="JSON_CONSOLE"/>
+            <queueSize>1024</queueSize>
+            <!-- 큐 포화 시에도 WARN/ERROR 는 절대 버리지 않음 -->
+            <discardingThreshold>0</discardingThreshold>
+            <neverBlock>false</neverBlock>
+            <includeCallerData>false</includeCallerData>
+        </appender>
+
+        <root level="INFO">
+            <appender-ref ref="ASYNC_JSON"/>
+        </root>
+    </springProfile>
+
+</configuration>

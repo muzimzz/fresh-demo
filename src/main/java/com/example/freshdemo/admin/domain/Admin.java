@@ -1,0 +1,48 @@
+package com.example.freshdemo.admin.domain;
+
+import com.example.freshdemo.common.jpa.MutableBaseEntity;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Table;
+import lombok.AccessLevel;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+
+/**
+ * 백오피스 관리자 계정. fm-backend(freshmarket)의 Admin 엔티티를 참고해 가져왔다.
+ * PK는 fm-backend의 Long AUTO_INCREMENT 대신 UUID(v7)를 쓴다 — Member를 포함해 이 프로젝트
+ * 전역이 UuidBaseEntity/MutableBaseEntity 컨벤션을 쓰고 있어서 그대로 맞췄다.
+ *
+ * 비밀번호 확인은 엔티티가 아니라 AdminService에서 PasswordEncoder로 한다(엔티티에 인코더 의존성을
+ * 넣지 않기 위함 — Member 쪽에 별도 비밀번호 필드가 없는 것과 같은 이유로 도메인을 얇게 유지).
+ */
+@Entity
+@Getter
+@Table(name = "admin")
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+public class Admin extends MutableBaseEntity {
+
+    @Column(name = "login_id", nullable = false, unique = true, length = 50)
+    private String loginId;
+
+    @Column(name = "password_hash", nullable = false, length = 255)
+    private String passwordHash;
+
+    @Column(nullable = false, length = 50)
+    private String name;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private AdminRole role;
+
+    @Builder
+    private Admin(String loginId, String passwordHash, String name, AdminRole role) {
+        this.loginId = loginId;
+        this.passwordHash = passwordHash;
+        this.name = name;
+        this.role = (role != null) ? role : AdminRole.ADMIN;
+    }
+}

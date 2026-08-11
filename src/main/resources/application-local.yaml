@@ -1,0 +1,7 @@
+# 로컬 개발용 프로필. SPRING_PROFILES_ACTIVE를 안 정하면 application.yaml의
+# spring.profiles.default: local 설정 때문에 이 파일이 기본으로 적용된다.
+
+jwt:
+  cookie:
+    # http://localhost는 HTTPS가 아니라서 Secure 쿠키를 켜면 브라우저가 쿠키 자체를 안 보낸다.
+    secure: ${JWT_COOKIE_SECURE:false}

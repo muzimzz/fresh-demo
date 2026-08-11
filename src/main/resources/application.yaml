@@ -1,0 +1,66 @@
+spring:
+  application:
+    name: fresh-demo
+
+  # 프로필을 명시적으로 안 켜면(SPRING_PROFILES_ACTIVE 등) local이 기본으로 적용된다 —
+  # 로컬 개발은 지금처럼 별도 설정 없이 바로 뜨고, 운영 배포 시에만 SPRING_PROFILES_ACTIVE=prod를
+  # 명시적으로 지정하도록 강제하는 셈이다(실수로 로컬 설정인 채로 운영에 올라가는 것보다,
+  # 실수로 prod 설정인 채로 로컬에서 막히는 쪽이 훨씬 안전하다).
+  profiles:
+    default: local
+
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:fresh_demo_db}?serverTimezone=Asia/Seoul&characterEncoding=UTF-8&useUnicode=true&allowPublicKeyRetrieval=true&useSSL=false
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:}
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        show_sql: false
+        format_sql: true
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+  security:
+    oauth2:
+      client:
+        registration:
+          kakao:
+            client-id: ${KAKAO_CLIENT_ID}
+            client-secret: ${KAKAO_CLIENT_SECRET}
+            redirect-uri: ${KAKAO_REDIRECT_URI:http://localhost:8080/api/login/oauth2/code/kakao}
+            client-authentication-method: client_secret_post
+            authorization-grant-type: authorization_code
+            scope: openid, account_email
+        provider:
+          kakao:
+            issuer-uri: https://kauth.kakao.com
+            user-info-uri: https://kapi.kakao.com/v1/oidc/userinfo
+            user-name-attribute: sub
+
+app:
+  frontend:
+    callback-url: ${FRONTEND_CALLBACK_URL:http://localhost:5173/oauth/callback}
+
+jwt:
+  secret: ${JWT_SECRET}
+  access-token-validity-ms: ${JWT_ACCESS_VALIDITY_MS:3600000}      # 1시간
+  refresh-token-validity-ms: ${JWT_REFRESH_VALIDITY_MS:1209600000} # 14일
+  # jwt.cookie.secure는 여기서 고정하지 않는다 — application-local.yaml/application-prod.yaml에서
+  # 프로필별로 다르게 설정한다(로컬은 http라 false 필수, 운영은 https라 true 필수).
+
+# KakaoUnlinkClient(탈퇴 시 unlink), KakaoUnlinkWebhookController(app_id 검증)에서 사용
+kakao:
+  app-id: ${KAKAO_APP_ID}
+  admin-key: ${KAKAO_ADMIN_KEY} # 절대 프론트/클라이언트에 노출 금지 — 서버 환경변수로만 관리
+
+server:
+  servlet:
+    context-path: /api
