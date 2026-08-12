@@ -23,9 +23,9 @@ public interface RefreshTokenBackupRepository extends JpaRepository<RefreshToken
      * @return 교체된 row 수. 0이면 옛 토큰이 안 맞았거나(이미 다른 요청이 먼저 바꿨거나 재사용) 행이 없다는 뜻.
      */
     @Modifying
-    @Query("update RefreshTokenBackup r set r.token = :newToken, r.expiresAt = :expiresAt " +
-            "where r.role = :role and r.ownerId = :ownerId and r.token = :oldToken")
-    int compareAndSet(String role, UUID ownerId, String oldToken, String newToken, LocalDateTime expiresAt);
+    @Query("update RefreshTokenBackup r set r.tokenHash = :newTokenHash, r.expiresAt = :expiresAt " +
+            "where r.role = :role and r.ownerId = :ownerId and r.tokenHash = :oldTokenHash")
+    int compareAndSet(String role, UUID ownerId, String oldTokenHash, String newTokenHash, LocalDateTime expiresAt);
 
     @Modifying
     @Query("delete from RefreshTokenBackup r where r.expiresAt < :now")

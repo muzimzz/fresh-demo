@@ -22,7 +22,10 @@ import org.springframework.web.util.ContentCachingResponseWrapper;
  *
  * - ContentCachingRequestWrapper/ResponseWrapper로 스트림을 감싸서 바디를 다시 읽을 수 있게 만든다
  *   (서블릿 InputStream/OutputStream은 원래 한 번만 읽고 버려짐).
- * - password/token류 "키"는 값을 통째로 REDACTED 처리, email/phone은 패턴으로 찾아 부분 마스킹.
+ * - password/token/phone/address류 "키"는 값을 통째로 REDACTED 처리(자유 형식 텍스트라 부분 마스킹이
+ *   애매해서), email/전화번호는 키 이름과 무관하게 본문 전체에서 패턴으로 찾아 부분 마스킹(catch-all).
+ * - 정상 응답(2xx/3xx)은 상태코드+소요시간만 INFO로 남기고, 에러 응답(4xx/5xx)만 바디까지 남긴다
+ *   (로그 볼륨 관리). DEBUG 레벨이면 정상 응답도 바디까지 남긴다 — logAccess() 참고.
  * - 응답은 반드시 copyBodyToResponse()로 실제 클라이언트에게 흘려보내야 한다 — 안 하면 빈 응답이 나감.
  * - 바이너리(이미지 업로드 등)나 SSE처럼 긴 스트리밍 응답은 본문 로깅 대상에서 제외.
  *
@@ -45,13 +48,22 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
             "/notifications/stream" // SSE 등 스트리밍 응답은 캐싱하면 안 됨
     );
 
-    // "password":"1234", "refreshToken": "eyJ..." 같은 키-값 쌍의 값을 통째로 마스킹
+    // "password":"1234", "refreshToken": "eyJ..." 같은 키-값 쌍의 값을 통째로 마스킹.
+    // phone/address류(recipient/zipcode/roadAddress/detailAddress)도 자유 형식 텍스트라 이메일처럼
+    // 부분 마스킹하기 애매해서 password/token과 똑같이 통째로 REDACTED 처리한다.
+    // 값 부분을 별도 캡처 그룹(3번)으로 빼서 PiiMasker.redact()에 그대로 넘긴다 — REDACTED 리터럴을
+    // 여기 직접 하드코딩하면 마스킹 문자열이 필요할 때마다 여러 곳에서 따로 관리돼서, 나중에
+    // 마스킹 표기를 바꾸거나 정책을 통일할 때 여기만 고치고 끝나지 않는다.
     private static final Pattern SENSITIVE_JSON_FIELD = Pattern.compile(
-            "(?i)(\"(password|accessToken|refreshToken|token|secret|authorization|idToken|clientSecret)\"\\s*:\\s*\")[^\"]*(\")");
+            "(?i)(\"(password|accessToken|refreshToken|token|secret|authorization|idToken|clientSecret"
+                    + "|phone|address|recipient|zipcode|roadAddress|detailAddress)\"\\s*:\\s*\")([^\"]*)(\")");
 
-    // 위 키-값 패턴에 안 걸린 이메일도 한 번 더 잡아서 부분 마스킹
+    // 위 키-값 패턴에 안 걸린 이메일/전화번호도 한 번 더 잡아서 부분 마스킹(키 이름이 다르거나
+    // 문자열 안에 섞여 나오는 경우 대비 catch-all).
     private static final Pattern EMAIL_PATTERN = Pattern.compile(
             "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}");
+
+    private static final Pattern PHONE_PATTERN = Pattern.compile("01[016789]-?\\d{3,4}-?\\d{4}");
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
@@ -73,17 +85,41 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
             filterChain.doFilter(wrappedRequest, wrappedResponse);
         } finally {
             long durationMs = System.currentTimeMillis() - start;
-
-            if (log.isInfoEnabled()) {
-                String reqBody = mask(extractBody(wrappedRequest.getContentAsByteArray()));
-                String resBody = mask(extractBody(wrappedResponse.getContentAsByteArray()));
-
-                log.info("event=HTTP_ACCESS status={} durationMs={} reqBody=\"{}\" resBody=\"{}\"",
-                        wrappedResponse.getStatus(), durationMs, reqBody, resBody);
-            }
+            logAccess(wrappedRequest, wrappedResponse, durationMs);
 
             // 캐싱 래퍼로 감쌌으니 실제 응답 스트림으로 반드시 다시 흘려보내야 클라이언트가 정상 응답을 받는다
             wrappedResponse.copyBodyToResponse();
+        }
+    }
+
+    /**
+     * 정상 응답(2xx/3xx)은 상태코드+소요시간만 INFO로 남긴다 — 매 요청마다 바디를 통째로 남기면
+     * 운영 환경에서 로그 볼륨이 감당이 안 된다. 에러 응답(4xx/5xx)은 원인 파악이 중요해서 바디까지
+     * 남기되, GlobalExceptionHandler의 "4xx=WARN, 5xx=ERROR" 관례를 그대로 따른다.
+     *
+     * 정상 응답이라도 DEBUG 레벨이 켜져 있으면 바디까지 남긴다 — 운영 중 특정 순간만 원인을
+     * 자세히 봐야 할 때 `/actuator/loggers`로 이 로거만 즉시 DEBUG로 올리면 재배포 없이 바디를
+     * 볼 수 있게 하기 위함이다(DEBUG를 계속 켜둔 채로 잊으면 다시 로그 폭탄이 되니 임시 디버깅
+     * 용도로만 쓸 것 — 상시 DEBUG 운영은 이 메서드를 만든 취지에 어긋난다).
+     */
+    private void logAccess(ContentCachingRequestWrapper request, ContentCachingResponseWrapper response, long durationMs) {
+        int status = response.getStatus();
+        boolean needsBody = status >= 400 || log.isDebugEnabled();
+
+        String reqBody = needsBody ? mask(extractBody(request.getContentAsByteArray())) : null;
+        String resBody = needsBody ? mask(extractBody(response.getContentAsByteArray())) : null;
+
+        if (status >= 500) {
+            log.error("event=HTTP_ACCESS status={} durationMs={} reqBody=\"{}\" resBody=\"{}\"",
+                    status, durationMs, reqBody, resBody);
+        } else if (status >= 400) {
+            log.warn("event=HTTP_ACCESS status={} durationMs={} reqBody=\"{}\" resBody=\"{}\"",
+                    status, durationMs, reqBody, resBody);
+        } else if (log.isDebugEnabled()) {
+            log.debug("event=HTTP_ACCESS status={} durationMs={} reqBody=\"{}\" resBody=\"{}\"",
+                    status, durationMs, reqBody, resBody);
+        } else if (log.isInfoEnabled()) {
+            log.info("event=HTTP_ACCESS status={} durationMs={}", status, durationMs);
         }
     }
 
@@ -101,14 +137,22 @@ public class HttpBodyLoggingFilter extends OncePerRequestFilter {
         if (body.isBlank()) {
             return body;
         }
-        String masked = SENSITIVE_JSON_FIELD.matcher(body).replaceAll(mr -> mr.group(1) + "***REDACTED***" + mr.group(3));
+        // group(3)=값(빈 문자열이면 PiiMasker.redact()가 그대로 통과시킴 — "값이 있는데 가렸다"는
+        // 오해를 방지), group(4)=닫는 따옴표.
+        String masked = SENSITIVE_JSON_FIELD.matcher(body).replaceAll(
+                mr -> mr.group(1) + PiiMasker.redact(mr.group(3)) + mr.group(4));
+        masked = maskPattern(masked, EMAIL_PATTERN, PiiMasker::maskEmail);
+        masked = maskPattern(masked, PHONE_PATTERN, PiiMasker::maskPhone);
+        return masked;
+    }
 
-        Matcher emailMatcher = EMAIL_PATTERN.matcher(masked);
+    private String maskPattern(String body, Pattern pattern, java.util.function.Function<String, String> masker) {
+        Matcher matcher = pattern.matcher(body);
         StringBuilder sb = new StringBuilder();
-        while (emailMatcher.find()) {
-            emailMatcher.appendReplacement(sb, Matcher.quoteReplacement(PiiMasker.maskEmail(emailMatcher.group())));
+        while (matcher.find()) {
+            matcher.appendReplacement(sb, Matcher.quoteReplacement(masker.apply(matcher.group())));
         }
-        emailMatcher.appendTail(sb);
+        matcher.appendTail(sb);
         return sb.toString();
     }
 }

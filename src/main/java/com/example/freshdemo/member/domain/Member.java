@@ -1,6 +1,7 @@
 package com.example.freshdemo.member.domain;
 
 import com.example.freshdemo.common.jpa.MutableBaseEntity;
+import com.example.freshdemo.common.logging.PiiMasker;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -43,6 +44,11 @@ public class Member extends MutableBaseEntity {
     // 약관 동의 시각. null이면 미동의 — boolean 대신 시각을 남겨서 "언제 동의했는지" 감사 추적이 되게 했다.
     @Column(name = "terms_agreed_at")
     private LocalDateTime termsAgreedAt;
+
+    // 필수 약관동의(termsAgreedAt)와 달리 선택 항목 — 온보딩 때 같이 받되 값이 없으면(요청 필드
+    // 누락) false로 취급한다. 목표 DDL의 is_marketing_agreed 컬럼을 그대로 들여옴.
+    @Column(name = "is_marketing_agreed", nullable = false)
+    private boolean marketingAgreed;
 
     // fm-backend(freshmarket) Member 엔티티의 phone 필드를 참고했다. address는 fm-backend에서는
     // 배송지 여러 개를 관리하는 별도 Address 엔티티(회원당 N개, 기본배송지 플래그)로 빠져 있는데,
@@ -106,9 +112,10 @@ public class Member extends MutableBaseEntity {
      * PENDING_PROFILE일 때만 일어난다. 약관 동의 자체를 거부하는 경로는 이 메서드에 안 들어온다
      * (요청 DTO의 @AssertTrue가 컨트롤러 진입 전에 이미 막음 — MemberOnboardingRequest 참고).
      */
-    public Member completeOnboarding(String nickname, LocalDateTime termsAgreedAt) {
+    public Member completeOnboarding(String nickname, LocalDateTime termsAgreedAt, boolean marketingAgreed) {
         assignNickname(nickname);
         this.termsAgreedAt = termsAgreedAt;
+        this.marketingAgreed = marketingAgreed;
         if (this.status == MemberStatus.PENDING_PROFILE) {
             this.status = MemberStatus.ACTIVE;
         }
@@ -142,5 +149,17 @@ public class Member extends MutableBaseEntity {
         // 새 행을 만드는 방식으로 처리한다(CustomOidcUserService 참고) — 그래서 reactivate()는
         // 더 이상 필요 없어 제거했다.
         this.activeProviderKey = null;
+    }
+
+    /**
+     * 실수로 엔티티를 통째로 log.info(member)/log.debug(member)처럼 찍어도 email/phone/address/
+     * socialTypeId 같은 민감정보가 그대로 새어나가지 않도록 방어적으로 오버라이드한다. email은
+     * 완전히 빼는 대신 PiiMasker로 부분 마스킹만 해서 남긴다 — 그래도 디버깅할 땐 어떤 계정인지
+     * 어느 정도 식별은 돼야 하니까. phone/address/socialTypeId/activeProviderKey는 아예 안 남긴다.
+     */
+    @Override
+    public String toString() {
+        return "Member{id=%s, nickname=%s, email=%s, status=%s, role=%s}"
+                .formatted(getId(), nickname, PiiMasker.maskEmail(email), status, role);
     }
 }

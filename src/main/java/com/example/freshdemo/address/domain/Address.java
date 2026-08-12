@@ -74,4 +74,10 @@ public class Address extends MutableBaseEntity {
         this.roadAddress = roadAddress;
         this.detailAddress = detailAddress;
     }
+
+    /** recipient/phone/zipcode/roadAddress/detailAddress 전부 개인정보라 통째로 뺀다 — id/소유자/기본여부만 남김. */
+    @Override
+    public String toString() {
+        return "Address{id=%s, memberId=%s, isDefault=%s}".formatted(getId(), memberId, isDefault);
+    }
 }

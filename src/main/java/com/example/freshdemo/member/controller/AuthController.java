@@ -3,6 +3,7 @@ package com.example.freshdemo.member.controller;
 import com.example.freshdemo.admin.domain.Admin;
 import com.example.freshdemo.admin.repository.AdminRepository;
 import com.example.freshdemo.auth.CustomUserDetails;
+import com.example.freshdemo.auth.jwt.AccessTokenValidAfterRepository;
 import com.example.freshdemo.auth.jwt.AuthCookieFactory;
 import com.example.freshdemo.auth.jwt.JwtTokenProvider;
 import com.example.freshdemo.auth.jwt.RefreshTokenRepository;
@@ -17,6 +18,7 @@ import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -43,6 +45,7 @@ public class AuthController {
 
     private final JwtTokenProvider jwtTokenProvider;
     private final RefreshTokenRepository refreshTokenRepository;
+    private final AccessTokenValidAfterRepository accessTokenValidAfterRepository;
     private final MemberRepository memberRepository;
     private final AdminRepository adminRepository;
     private final AuthCookieFactory authCookieFactory;
@@ -87,8 +90,19 @@ public class AuthController {
             // 들어온 것(탈취 의심)일 수 있다 — 어느 쪽인지 구분할 방법이 없으니 안전하게 재사용으로
             // 간주해 세션을 통째로 무효화한다. (role, id)당 세션이 하나뿐인 키 구조라 삭제 한 번으로
             // 완전히 끊긴다 — 진짜 사용자도 다시 로그인해야 하지만, 탈취 가능성을 방치하는 것보다 낫다.
+            //
+            // RT뿐 아니라 AT도 같이 무효화한다 — RT가 탈취됐다는 건 같은 시점에 발급된 AT도 탈취됐을
+            // 가능성이 있다는 뜻이라, RT 재발급만 막고 이미 살아있는 AT를 그대로 두면 탈취범이 그
+            // AT의 남은 수명(최대 1시간) 동안은 계속 정상 요청을 보낼 수 있다. cutoff=지금 시각으로
+            // 등록하면 재로그인해서 새로 받는 토큰(iat가 cutoff 이후)은 영향받지 않는다.
             refreshTokenRepository.delete(claimedRole, id);
-            log.warn("event=REFRESH_TOKEN_REUSE_SUSPECTED role={} id={}", claimedRole, id);
+            accessTokenValidAfterRepository.invalidateBefore(
+                    claimedRole, id, LocalDateTime.now(),
+                    Duration.ofMillis(jwtTokenProvider.getAccessTokenValidityMs()));
+            // jti는 서명 없는 순수 식별자 라벨이라 평문으로 남겨도 안전하다(JwtTokenProvider.createRefreshToken() 참고) —
+            // 나중에 "정확히 어떤 토큰 인스턴스가 재사용됐는지" 로그로 추적할 수 있게.
+            log.warn("event=REFRESH_TOKEN_REUSE_SUSPECTED role={} id={} jti={}",
+                    claimedRole, id, jwtTokenProvider.getJti(refreshToken));
             throw new BusinessException(ErrorCode.UNAUTHORIZED);
         }
 

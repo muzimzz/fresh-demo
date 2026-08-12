@@ -7,6 +7,7 @@ import com.example.freshdemo.member.repository.MemberRepository;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.client.oidc.userinfo.OidcUserRequest;
@@ -16,6 +17,12 @@ import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * 여기서 던지는 OAuth2AuthenticationException은 OAuth2LoginFailureHandler가 최종적으로 잡아서
+ * event=MEMBER_LOGIN_FAILED로 로깅한다 — 그 핸들러는 예외 클래스명 정도만 아니까, 여기서는 그보다
+ * 구체적인 맥락(어떤 소셜 타입 요청이었는지 등)을 먼저 로그로 남겨두고 던진다.
+ */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class CustomOidcUserService extends OidcUserService {
@@ -33,6 +40,7 @@ public class CustomOidcUserService extends OidcUserService {
         try {
             socialType = SocialType.valueOf(registrationId.toUpperCase());
         } catch (IllegalArgumentException e) {
+            log.warn("event=MEMBER_LOGIN_FAILED reason=UNSUPPORTED_REGISTRATION_ID registrationId={}", registrationId);
             throw new OAuth2AuthenticationException("지원하지 않는 소셜 로그인, [registrationId]: " + registrationId);
         }
 
@@ -57,7 +65,10 @@ public class CustomOidcUserService extends OidcUserService {
                 member = memberRepository.saveAndFlush(attrs.toEntity());
             } catch (DataIntegrityViolationException e) {
                 member = memberRepository.findByActiveProviderKey(activeProviderKey)
-                        .orElseThrow(() -> e);
+                        .orElseThrow(() -> {
+                            log.warn("event=MEMBER_LOGIN_FAILED reason=SIGNUP_RACE_UNRESOLVED socialType={}", socialType);
+                            return e;
+                        });
             }
         }
 

@@ -34,7 +34,7 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     runtimeOnly 'com.mysql:mysql-connector-j'
 
-    // refreshToken / accessToken 블랙리스트 저장
+    // refreshToken 저장 / accessToken 무효화 커트라인(AccessTokenValidAfterRepository) 저장
     implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 
     // KakaoUnlinkClient(카카오 unlink API 호출)용 WebClient
@@ -42,6 +42,16 @@ dependencies {
 
     // logback-spring.xml의 prod 프로필 JSON 로그 인코더(LogstashEncoder)용
     implementation 'net.logstash.logback:logstash-logback-encoder:8.0'
+
+    // SchedulerLoggingAspect(@Scheduled 메서드 공통 로깅)용.
+    // spring-boot-starter-aop가 이 프로젝트 환경에서는(버전 명시해도) 아예 리졸브가 안 됨 — 그래서
+    // starter를 통째로 쓰는 대신 실제로 필요한 조각만 직접 추가한다. spring-aop 자체는 이미
+    // spring-boot-starter-data-jpa(→ @Transactional 프록시)를 통해 전이 의존성으로 들어와 있어서
+    // 없어도 되고, 진짜 없는 건 aspectjweaver뿐이다 — 이게 클래스패스에 있어야 스프링 부트의
+    // AopAutoConfiguration이 활성화돼서 @Aspect + AspectJ 포인트컷 표현식(@annotation(...))이
+    // 실제로 적용된다(없으면 @Aspect 빈이 그냥 아무 효과 없는 빈으로만 등록되고 조용히 무시됨).
+    // 버전은 스프링 부트 BOM이 아니라 AspectJ 자체 버전이라 독립적으로 명시.
+    implementation 'org.aspectj:aspectjweaver:1.9.22'
 
     compileOnly 'org.projectlombok:lombok'
     developmentOnly 'org.springframework.boot:spring-boot-devtools'

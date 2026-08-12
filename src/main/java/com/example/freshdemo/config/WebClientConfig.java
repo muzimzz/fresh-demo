@@ -1,5 +1,6 @@
 package com.example.freshdemo.config;
 
+import com.example.freshdemo.common.filter.ExternalApiLoggingExchangeFilter;
 import com.example.freshdemo.common.filter.TraceIdExchangeFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -14,11 +15,16 @@ public class WebClientConfig {
      * TraceIdExchangeFilter를 붙여뒀지만 카카오는 우리 traceId 규약을 모르니 지금은 사실상 무효과다
      * (TraceIdExchangeFilter의 클래스 주석 참고) — 나중에 우리가 만든 다른 서비스를 이 WebClient류로
      * 호출하게 되면 그때부터 값어치가 생긴다.
+     *
+     * ExternalApiLoggingExchangeFilter는 반대로 지금 당장도 값어치가 있다 — 이 WebClient로 나가는
+     * 모든 호출(지금은 카카오, 나중에 다른 외부 API가 추가돼도)의 상태코드/소요시간이 자동으로 남는다.
+     * 새 외부 API용 WebClient를 추가할 땐 이 필터도 같이 붙이는 걸 잊지 말 것.
      */
     @Bean
     public WebClient kakaoApiWebClient() {
         return WebClient.builder()
                 .filter(TraceIdExchangeFilter.propagateTraceId())
+                .filter(ExternalApiLoggingExchangeFilter.logCalls())
                 .build();
     }
 }

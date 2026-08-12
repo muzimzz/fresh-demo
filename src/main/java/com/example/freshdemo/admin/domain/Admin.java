@@ -1,6 +1,7 @@
 package com.example.freshdemo.admin.domain;
 
 import com.example.freshdemo.common.jpa.MutableBaseEntity;
+import com.example.freshdemo.common.logging.PiiMasker;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -44,5 +45,16 @@ public class Admin extends MutableBaseEntity {
         this.passwordHash = passwordHash;
         this.name = name;
         this.role = (role != null) ? role : AdminRole.ADMIN;
+    }
+
+    /**
+     * passwordHash는 절대 로그에 남으면 안 되는 값이라 toString()에서 완전히 제외한다.
+     * name은 실명일 수 있어 마스킹, loginId는 계정을 식별해야 디버깅이 되니 그대로 남긴다
+     * (비밀번호 자체가 아니라 "아이디"라 유출 위험도가 다르다).
+     */
+    @Override
+    public String toString() {
+        return "Admin{id=%s, loginId=%s, name=%s, role=%s}"
+                .formatted(getId(), loginId, PiiMasker.maskName(name), role);
     }
 }

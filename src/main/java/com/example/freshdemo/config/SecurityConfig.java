@@ -1,9 +1,10 @@
 package com.example.freshdemo.config;
 
-import com.example.freshdemo.auth.jwt.AccessTokenBlacklistRepository;
+import com.example.freshdemo.auth.jwt.AccessTokenValidAfterRepository;
 import com.example.freshdemo.auth.jwt.JwtAuthenticationFilter;
 import com.example.freshdemo.auth.jwt.JwtTokenProvider;
 import com.example.freshdemo.auth.jwt.RememberMeRequestFilter;
+import com.example.freshdemo.member.oauth.OAuth2LoginFailureHandler;
 import com.example.freshdemo.member.oauth.OAuth2LoginSuccessHandler;
 import com.example.freshdemo.member.oauth.error.JwtAccessDeniedHandler;
 import com.example.freshdemo.member.oauth.error.JwtAuthenticationEntryPoint;
@@ -39,8 +40,9 @@ public class SecurityConfig {
 
     private final CustomOidcUserService customOidcUserService;
     private final JwtTokenProvider jwtTokenProvider;
-    private final AccessTokenBlacklistRepository accessTokenBlacklistRepository;
+    private final AccessTokenValidAfterRepository accessTokenValidAfterRepository;
     private final OAuth2LoginSuccessHandler oAuth2LoginSuccessHandler;
+    private final OAuth2LoginFailureHandler oAuth2LoginFailureHandler;
     private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
     private final JwtAccessDeniedHandler jwtAccessDeniedHandler;
 
@@ -74,10 +76,11 @@ public class SecurityConfig {
                         .userInfoEndpoint(userInfo -> userInfo
                                 .oidcUserService(customOidcUserService))
                         .successHandler(oAuth2LoginSuccessHandler)
+                        .failureHandler(oAuth2LoginFailureHandler)
                 )
 
                 .addFilterBefore(
-                        new JwtAuthenticationFilter(jwtTokenProvider, accessTokenBlacklistRepository),
+                        new JwtAuthenticationFilter(jwtTokenProvider, accessTokenValidAfterRepository),
                         UsernamePasswordAuthenticationFilter.class)
 
                 // 카카오로 리다이렉트되기 전에 ?rememberMe=true를 쿠키에 담아둬야 하므로

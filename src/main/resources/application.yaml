@@ -2,6 +2,12 @@ spring:
   application:
     name: fresh-demo
 
+  # 실제 비밀값은 gitignore된 application-secret.yaml에서 로드한다(파일이 없으면 무시하고 넘어감 —
+  # optional: 접두사). 프로젝트 루트에 application-secret.yaml.example을 복사해서 채워 넣으면 된다.
+  # (또는 아래 ${VAR:default} 자리에 환경변수로 주입해도 동일하게 동작 — 배포 환경은 보통 이쪽을 쓴다.)
+  config:
+    import: optional:file:application-secret.yaml
+
   # 프로필을 명시적으로 안 켜면(SPRING_PROFILES_ACTIVE 등) local이 기본으로 적용된다 —
   # 로컬 개발은 지금처럼 별도 설정 없이 바로 뜨고, 운영 배포 시에만 SPRING_PROFILES_ACTIVE=prod를
   # 명시적으로 지정하도록 강제하는 셈이다(실수로 로컬 설정인 채로 운영에 올라가는 것보다,
@@ -10,7 +16,7 @@ spring:
     default: local
 
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:fresh_demo_db}?serverTimezone=Asia/Seoul&characterEncoding=UTF-8&useUnicode=true&allowPublicKeyRetrieval=true&useSSL=false
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:fresh_demo}?serverTimezone=Asia/Seoul&characterEncoding=UTF-8&useUnicode=true&allowPublicKeyRetrieval=true&useSSL=false
     username: ${MYSQL_USER:root}
     password: ${MYSQL_PASSWORD:}
 

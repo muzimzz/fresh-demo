@@ -1,6 +1,6 @@
 package com.example.freshdemo.member.service;
 
-import com.example.freshdemo.auth.jwt.AccessTokenBlacklistRepository;
+import com.example.freshdemo.auth.jwt.AccessTokenValidAfterRepository;
 import com.example.freshdemo.auth.jwt.JwtTokenProvider;
 import com.example.freshdemo.auth.jwt.RefreshTokenRepository;
 import com.example.freshdemo.common.exception.BusinessException;
@@ -9,6 +9,7 @@ import com.example.freshdemo.member.domain.Member;
 import com.example.freshdemo.member.domain.SocialType;
 import com.example.freshdemo.member.repository.MemberRepository;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
@@ -21,7 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 순서가 중요하다:
  *   1) DB 상태 변경(WITHDRAWN) — 이 트랜잭션이 실패하면 아래 아무것도 실행 안 됨
  *   2) refreshToken 삭제 — 재발급을 막음
- *   3) 남은 accessToken 유효시간만큼 블랙리스트 등록 — 이미 발급된 토큰도 즉시 차단
+ *   3) accessTokenValidAfter 커트라인을 지금 시각으로 등록 — 이미 발급된 토큰도 즉시 차단
  *   4) 카카오 unlink 호출은 여기서 직접 안 하고 이벤트로 미룸(KakaoUnlinkEventListener, AFTER_COMMIT) —
  *      DB 트랜잭션이 실제로 커밋된 뒤에만 외부에 "탈퇴했다"고 통보하기 위함
  */
@@ -31,7 +32,7 @@ public class MemberWithdrawalService {
 
     private final MemberRepository memberRepository;
     private final RefreshTokenRepository refreshTokenRepository;
-    private final AccessTokenBlacklistRepository accessTokenBlacklistRepository;
+    private final AccessTokenValidAfterRepository accessTokenValidAfterRepository;
     private final JwtTokenProvider jwtTokenProvider;
     private final ApplicationEventPublisher eventPublisher;
 
@@ -53,7 +54,8 @@ public class MemberWithdrawalService {
 
         String role = member.getRole().name();
         refreshTokenRepository.delete(role, memberId);
-        accessTokenBlacklistRepository.blacklist(role, memberId, Duration.ofMillis(jwtTokenProvider.getAccessTokenValidityMs()));
+        accessTokenValidAfterRepository.invalidateBefore(
+                role, memberId, LocalDateTime.now(), Duration.ofMillis(jwtTokenProvider.getAccessTokenValidityMs()));
 
         eventPublisher.publishEvent(new MemberWithdrawalEvent(memberId, kakaoUserId));
     }
@@ -73,8 +75,9 @@ public class MemberWithdrawalService {
                     member.withdraw();
                     String role = member.getRole().name();
                     refreshTokenRepository.delete(role, member.getId());
-                    accessTokenBlacklistRepository.blacklist(
-                            role, member.getId(), Duration.ofMillis(jwtTokenProvider.getAccessTokenValidityMs()));
+                    accessTokenValidAfterRepository.invalidateBefore(
+                            role, member.getId(), LocalDateTime.now(),
+                            Duration.ofMillis(jwtTokenProvider.getAccessTokenValidityMs()));
                 });
         // 회원이 없거나 이미 탈퇴 상태여도 예외를 던지지 않는다 — 웹훅 응답은 무조건 200이어야 하므로
         // (카카오 문서: "사용자 정보가 없거나 오류 발생 시에도 200 OK로 응답해야 한다")

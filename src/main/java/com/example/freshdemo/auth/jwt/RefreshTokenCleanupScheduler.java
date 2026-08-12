@@ -14,6 +14,9 @@ import org.springframework.transaction.annotation.Transactional;
  * 삭제 대상 판단만 하는 배치라 Redis 상태와는 무관하게 동작한다 — Redis에서 이미 갱신/삭제된
  * 세션이라도 DB 백업 쪽 expiresAt이 지났으면 그냥 지운다(Redis가 최신 상태를 어떻게 들고 있는지와
  * 상관없이, "이 백업 row는 더 이상 유효하지 않은 시점이 지났다"는 사실만으로 정리 대상이 되는 것).
+ *
+ * 실행 시작/종료/소요시간은 SchedulerLoggingAspect가 공통으로 남겨준다 — 여기서는 "몇 건 지웠는지"
+ * 같은 이 스케줄러만의 구체적인 처리 결과만 로깅한다.
  */
 @Slf4j
 @Component

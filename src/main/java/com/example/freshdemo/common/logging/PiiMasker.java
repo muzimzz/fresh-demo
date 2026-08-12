@@ -7,8 +7,9 @@ package com.example.freshdemo.common.logging;
  * 명시적으로 호출하는 방식을 택했다 — "이 필드는 마스킹된다"는 게 어노테이션 뒤에 숨지 않고
  * 코드에 그대로 드러나야, 리뷰할 때나 나중에 필드를 추가할 때 실수로 놓치지 않는다.
  *
- * 예: 남에게 보여주는 프로필(MemberPublicResponse)은 maskEmail()을 쓰고,
- *     본인 전용 응답(MemberResponse, "내 정보 조회")은 마스킹 없이 원본을 그대로 준다.
+ * 예: 본인 전용 응답(MemberResponse, "내 정보 조회")은 마스킹 없이 원본을 그대로 주고,
+ *     엔티티 toString()이나 로그에는 maskEmail()/maskName() 등으로 마스킹해서 남긴다.
+ *     (남에게 보여주는 공개 프로필 응답은 현재 fresh-demo 범위엔 없음 — 필요해지면 이 패턴 재사용)
  */
 public final class PiiMasker {
 

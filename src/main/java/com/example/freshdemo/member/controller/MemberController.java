@@ -33,7 +33,8 @@ public class MemberController {
             @AuthenticationPrincipal CustomUserDetails userDetails,
             @RequestBody @Valid MemberOnboardingRequest request
     ) {
-        Member member = memberOnboardingService.completeOnboarding(userDetails.getId(), request.nickname());
+        Member member = memberOnboardingService.completeOnboarding(
+                userDetails.getId(), request.nickname(), request.marketingAgreed());
         return ResponseEntity.ok(ApiResponse.of(MemberResponse.from(member)));
     }
 }

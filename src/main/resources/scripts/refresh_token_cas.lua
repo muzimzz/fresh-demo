@@ -1,6 +1,6 @@
 -- KEYS[1] = refreshToken:{role}:{id}
--- ARGV[1] = 기대하는 옛 값(쿠키로 들어온 refreshToken)
--- ARGV[2] = 새로 저장할 값
+-- ARGV[1] = 기대하는 옛 값(쿠키로 들어온 refreshToken의 SHA-256 해시 — 원문이 아니라 해시를 넘긴다)
+-- ARGV[2] = 새로 저장할 값(새 refreshToken의 SHA-256 해시)
 -- ARGV[3] = TTL(ms)
 --
 -- 저장된 값이 ARGV[1]과 같을 때만 ARGV[2]로 교체한다. Redis가 싱글스레드라 이 스크립트 전체가

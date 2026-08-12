@@ -10,6 +10,7 @@ public record MemberResponse(
         String email,
         String phone,
         String address,
+        boolean marketingAgreed,
         MemberRole role,
         MemberStatus status,
         LocalDateTime createdAt
@@ -20,6 +21,7 @@ public record MemberResponse(
                 member.getEmail(),
                 member.getPhone(),
                 member.getAddress(),
+                member.isMarketingAgreed(),
                 member.getRole(),
                 member.getStatus(),
                 member.getCreatedAt()

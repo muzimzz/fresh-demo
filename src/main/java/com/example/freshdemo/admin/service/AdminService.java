@@ -14,11 +14,18 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.time.Duration;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * 관리자 계정 발급/삭제는 권한 상승/회수로 직결되는 민감한 액션이라, 누가(actorId) 언제 누구를
+ * (targetId) 대상으로 했는지 감사 로그(event=ADMIN_*)를 남긴다 — 마스킹 없이 id만 찍는다
+ * (DESIGN_NOTES.md 로깅 원칙: 비즈니스 로그는 원칙적으로 id만).
+ */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AdminService {
@@ -32,11 +39,18 @@ public class AdminService {
     @Transactional(readOnly = true)
     public Admin login(String loginId, String rawPassword, HttpServletResponse response) {
         // 계정 존재 여부를 노출하지 않기 위해 "없음"과 "비번 틀림"을 같은 에러로 응답한다
-        // DaoAuthenticationProvider가 BadCredentialsException으로 두 경우를 감춰주는 것을 수동으로 재현
+        // DaoAuthenticationProvider가 BadCredentialsException으로 두 경우를 감춰주는 것을 수동으로 재현.
+        // 이 구분은 "응답"에만 없는 거고, 우리끼리만 보는 로그엔 원인을 구분해서 남긴다 —
+        // 브루트포스(특정 계정에 비번만 계속 틀림)와 계정 나열 공격(존재하지 않는 아이디를 계속 시도)을
+        // 로그로 구분해서 볼 수 있어야 하기 때문.
         Admin admin = adminRepository.findByLoginId(loginId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_PASSWORD));
+                .orElseThrow(() -> {
+                    log.warn("event=ADMIN_LOGIN_FAILED loginId={} reason=NO_SUCH_ACCOUNT", loginId);
+                    return new BusinessException(ErrorCode.INVALID_PASSWORD);
+                });
 
         if (!passwordEncoder.matches(rawPassword, admin.getPasswordHash())) {
+            log.warn("event=ADMIN_LOGIN_FAILED adminId={} reason=WRONG_PASSWORD", admin.getId());
             throw new BusinessException(ErrorCode.INVALID_PASSWORD);
         }
 
@@ -53,6 +67,7 @@ public class AdminService {
         response.addHeader(HttpHeaders.SET_COOKIE, authCookieFactory.accessTokenCookie(accessToken, true).toString());
         response.addHeader(HttpHeaders.SET_COOKIE, authCookieFactory.refreshTokenCookie(refreshToken, true).toString());
 
+        log.info("event=ADMIN_LOGIN_SUCCESS adminId={}", adminId);
         return admin;
     }
 
@@ -70,7 +85,11 @@ public class AdminService {
         }
 
         String encodedPassword = passwordEncoder.encode(request.password());
-        return adminRepository.save(request.toEntity(encodedPassword));
+        Admin created = adminRepository.save(request.toEntity(encodedPassword));
+
+        log.info("event=ADMIN_REGISTERED actorId={} targetId={} targetRole={}",
+                requesterId, created.getId(), created.getRole());
+        return created;
     }
 
     @Transactional
@@ -90,5 +109,7 @@ public class AdminService {
         refreshTokenRepository.delete(target.getRole().toAuthority(), target.getId());
 
         adminRepository.deleteById(targetAdminId);
+
+        log.info("event=ADMIN_DELETED actorId={} targetId={}", requesterId, targetAdminId);
     }
 }

@@ -24,7 +24,7 @@ public class MemberOnboardingService {
     private final MemberRepository memberRepository;
 
     @Transactional
-    public Member completeOnboarding(UUID memberId, String nickname) {
+    public Member completeOnboarding(UUID memberId, String nickname, boolean marketingAgreed) {
         Member member = memberRepository.findById(memberId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.MEMBER_NOT_FOUND));
 
@@ -37,6 +37,6 @@ public class MemberOnboardingService {
             throw new BusinessException(ErrorCode.DUPLICATE_NICKNAME);
         }
 
-        return member.completeOnboarding(nickname, LocalDateTime.now());
+        return member.completeOnboarding(nickname, LocalDateTime.now(), marketingAgreed);
     }
 }

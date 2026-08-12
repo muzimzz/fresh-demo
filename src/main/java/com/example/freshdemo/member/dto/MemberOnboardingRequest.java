@@ -14,6 +14,9 @@ import jakarta.validation.constraints.Size;
  */
 public record MemberOnboardingRequest(
         @NotBlank @Size(max = 20) String nickname,
-        @AssertTrue(message = "약관에 동의해야 가입할 수 있습니다.") boolean termsAgreed
+        @AssertTrue(message = "약관에 동의해야 가입할 수 있습니다.") boolean termsAgreed,
+        // 선택 항목이라 검증 어노테이션 없음. 필드 자체를 안 보내면(JSON에 없으면) Jackson이
+        // boolean 기본값 false로 채운다 — "명시적으로 동의 안 함"과 "그냥 안 보냄"을 구분하지 않는다.
+        boolean marketingAgreed
 ) {
 }

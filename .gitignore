@@ -35,3 +35,7 @@ out/
 
 ### VS Code ###
 .vscode/
+
+### 환경/비밀 ###
+.env
+application-secret.yaml
