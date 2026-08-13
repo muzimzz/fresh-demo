@@ -19,7 +19,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
@@ -59,7 +58,7 @@ public class AuthController {
             throw new BusinessException(ErrorCode.UNAUTHORIZED);
         }
 
-        UUID id = jwtTokenProvider.getId(refreshToken);
+        Long id = jwtTokenProvider.getId(refreshToken);
         TokenType type = jwtTokenProvider.getType(refreshToken);
         String claimedRole = jwtTokenProvider.getRole(refreshToken);
 
@@ -112,7 +111,7 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.of(null));
     }
 
-    private String reissueMemberRole(UUID memberId, String claimedRole) {
+    private String reissueMemberRole(Long memberId, String claimedRole) {
         Member member = memberRepository.findById(memberId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.MEMBER_NOT_FOUND));
 
@@ -125,7 +124,7 @@ public class AuthController {
         return member.getRole().name();
     }
 
-    private String reissueAdminRole(UUID adminId) {
+    private String reissueAdminRole(Long adminId) {
         Admin admin = adminRepository.findById(adminId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ADMIN_NOT_FOUND));
 

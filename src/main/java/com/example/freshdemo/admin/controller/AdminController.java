@@ -10,7 +10,6 @@ import com.example.freshdemo.auth.CustomUserDetails;
 import com.example.freshdemo.common.response.ApiResponse;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -46,7 +45,7 @@ public class AdminController {
     }
 
     @DeleteMapping("/{adminId}")
-    public ResponseEntity<ApiResponse<Void>> deleteAdmin(@PathVariable UUID adminId,
+    public ResponseEntity<ApiResponse<Void>> deleteAdmin(@PathVariable Long adminId,
                                              @AuthenticationPrincipal CustomUserDetails requester) {
         adminService.deleteAdmin(adminId, requester.getId());
         return ResponseEntity.ok(ApiResponse.of(null));

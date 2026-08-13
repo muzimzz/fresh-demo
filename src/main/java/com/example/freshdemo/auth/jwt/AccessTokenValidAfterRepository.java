@@ -2,7 +2,6 @@ package com.example.freshdemo.auth.jwt;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Repository;
@@ -20,7 +19,7 @@ import org.springframework.stereotype.Repository;
  * 이후에 새로 발급된 토큰은 정상 통과된다.
  *
  * 탈퇴/계정삭제/토큰탈취 의심(RT 재사용 감지) 전부 이 하나의 메커니즘으로 통일했다 — cutoff=지금
- * 시각으로 호출하면 예전 boolean 블랙리스트와 결과가 동일하다(탈퇴는 애초에 재가입이 새 UUID로
+ * 시각으로 호출하면 예전 boolean 블랙리스트와 결과가 동일하다(탈퇴는 애초에 재가입이 새 PK로
  * 새 행을 만드는 구조라 "재로그인 후 새 토큰까지 막히는" 문제 자체가 발생하지 않는다).
  *
  * DB 백업은 일부러 안 둔다 — RefreshTokenRepository와 달리 이건 인증이 필요한 "모든" 요청마다
@@ -42,12 +41,12 @@ public class AccessTokenValidAfterRepository {
      * 그 이후엔 cutoff 이전 토큰들도 자기 exp로 이미 자연 만료됐을 것이기 때문에, 이 커트라인
      * 엔트리 자체를 계속 들고 있을 필요가 없다.
      */
-    public void invalidateBefore(String role, UUID id, LocalDateTime cutoff, Duration ttl) {
+    public void invalidateBefore(String role, Long id, LocalDateTime cutoff, Duration ttl) {
         redisTemplate.opsForValue().set(key(role, id), cutoff.toString(), ttl);
     }
 
     /** 커트라인이 없으면(한 번도 무효화된 적 없음) 항상 유효. 있으면 발급 시각이 커트라인 이후여야 유효. */
-    public boolean isValidAfter(String role, UUID id, LocalDateTime tokenIssuedAt) {
+    public boolean isValidAfter(String role, Long id, LocalDateTime tokenIssuedAt) {
         String stored = redisTemplate.opsForValue().get(key(role, id));
         if (stored == null) {
             return true;
@@ -56,7 +55,7 @@ public class AccessTokenValidAfterRepository {
         return !tokenIssuedAt.isBefore(cutoff);
     }
 
-    private String key(String role, UUID id) {
+    private String key(String role, Long id) {
         return KEY_PREFIX + role + ":" + id;
     }
 }

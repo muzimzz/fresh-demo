@@ -1,9 +1,13 @@
 package com.example.freshdemo.member.oauth.oidc;
 
+import com.example.freshdemo.common.exception.BusinessException;
+import com.example.freshdemo.common.exception.ErrorCode;
 import com.example.freshdemo.member.domain.Member;
 import com.example.freshdemo.member.domain.SocialType;
 import com.example.freshdemo.member.oauth.OAuthAttributes;
 import com.example.freshdemo.member.repository.MemberRepository;
+import com.example.freshdemo.membergrade.domain.MemberGrade;
+import com.example.freshdemo.membergrade.repository.MemberGradeRepository;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class CustomOidcUserService extends OidcUserService {
 
     private final MemberRepository memberRepository;
+    private final MemberGradeRepository memberGradeRepository;
 
     @Override
     @Transactional
@@ -61,8 +66,15 @@ public class CustomOidcUserService extends OidcUserService {
             // activeProviderKey로 못 찾은 경우 = 완전 신규 가입이거나, 예전에 탈퇴해서 키가 비워진
             // 계정의 재가입이거나 — 어느 쪽이든 "새 행"을 만든다. 탈퇴했던 옛 행은 재활성화하지
             // 않고 이력으로만 남겨둔다(active_provider_key 설계).
+            //
+            // 신규 행은 memberGradeId가 NOT NULL이라 항상 기본 등급(isDefault=true)을 먼저 찾아
+            // 배정한다 — 이 조회가 비어 있으면(운영 실수로 기본 등급 시드가 없는 경우) 가입 자체를
+            // 막는 게 맞다고 판단해 예외를 던진다. 등급을 바꾸는 기능은 아직 없어 이후엔 그대로 유지된다.
             try {
-                member = memberRepository.saveAndFlush(attrs.toEntity());
+                Long defaultGradeId = memberGradeRepository.findByIsDefaultTrue()
+                        .map(MemberGrade::getId)
+                        .orElseThrow(() -> new BusinessException(ErrorCode.DEFAULT_MEMBER_GRADE_NOT_FOUND));
+                member = memberRepository.saveAndFlush(attrs.toEntity(defaultGradeId));
             } catch (DataIntegrityViolationException e) {
                 member = memberRepository.findByActiveProviderKey(activeProviderKey)
                         .orElseThrow(() -> {

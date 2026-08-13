@@ -21,7 +21,7 @@
 | Mock 경계 맹점 (DB가 강제하는 불변식) | **그대로 채택 — 실제로 레이스 컨디션 3개를 찾음.** 4번 섹션 참고. |
 | 구조적으로 안 보이는 결함(동시성/크로스플로우/미요구사항) | **그대로 채택.** 5번 섹션에 체크리스트로 분리(테스트가 아니라). |
 | 능력 도달 범위(권한 하나로 뭘 할 수 있나) | **그대로 채택 — 2번 섹션의 발견의 근거가 된 질문.** |
-| 트랜잭션 컨텍스트 정직성(OSIV lazy-loading 함정) | **현재는 구조적으로 해당 없음.** `open-in-view: false`인데, 이 프로젝트의 모든 엔티티가 `@ManyToOne`/`@OneToMany` 연관관계를 아예 안 씀(Address/RefreshTokenBackup 모두 FK를 UUID 필드로만 들고 있음) — 지연 로딩 자체가 없어서 이 함정이 원천적으로 발생 안 한다. `MemberGrade`↔`Member` 연관관계를 나중에 실제로 걸면(DESIGN_NOTES 10번) 그때 다시 챙겨야 한다. |
+| 트랜잭션 컨텍스트 정직성(OSIV lazy-loading 함정) | **현재는 구조적으로 해당 없음.** `open-in-view: false`인데, 이 프로젝트의 모든 엔티티가 `@ManyToOne`/`@OneToMany` 연관관계를 아예 안 씀(Address/RefreshTokenBackup 모두 FK를 Long 필드로만 들고 있음) — 지연 로딩 자체가 없어서 이 함정이 원천적으로 발생 안 한다. `MemberGrade`↔`Member` 연관관계를 나중에 실제로 걸면(DESIGN_NOTES 10번) 그때 다시 챙겨야 한다. |
 | 다차원 검증기(스킴/호스트/포트 등) | **해당 없음.** 이런 성격의 검증기 자체가 코드베이스에 없음. |
 | 뮤테이션 저항성 | **원칙만 수동으로 채택, 도구는 안 씀.** PIT 같은 뮤테이션 테스트 도구 도입은 이 프로젝트 규모에 비해 과함 — 대신 6번 섹션에서 핵심 테스트 몇 개를 골라 "이 테스트가 진짜 뭘 잡아내는지"를 손으로 검토했다. |
 | 약화된 테스트 탐지 / 불안정성(flaky) 탐지 | **아직 해당 없음.** 기존 테스트가 없으니 "약화"될 대상이 없다. 테스트 스위트가 생긴 뒤, PR마다 이 체크리스트로 diff를 감사하는 용도로는 그대로 유용할 것 — 그때 `test-quality-reviewer`를 실제로 호출하면 됨. |
@@ -36,9 +36,9 @@
   `authenticated()`로만 막혀 있고 `type=MEMBER`를 확인하지 않는다는 걸 발견했다. 대부분의 경우
   ADMIN 토큰으로 이 엔드포인트를 호출하면 `memberRepository.findById(adminId)`가 못 찾아서
   자연스럽게 400으로 막히지만, **`POST /addresses`는 다르다** — `AddressService.create()`가 회원
-  존재 여부를 확인하지 않고 JWT의 `sub`(여기선 관리자 UUID)를 그대로 `memberId`로 써서 배송지
+  존재 여부를 확인하지 않고 JWT의 `sub`(여기선 관리자 id)를 그대로 `memberId`로 써서 배송지
   row를 만들어버린다. 즉 관리자 계정으로 로그인한 뒤 `/addresses`를 호출하면 실제 회원이 아닌
-  UUID를 주인으로 하는 배송지가 조용히 생성된다. 2번 섹션 참고.
+  admin id를 주인으로 하는 배송지가 조용히 생성된다. 2번 섹션 참고.
 - **Mock 경계 맹점을 적용해보니**, `Admin.loginId`/`Member.nickname`의 유니크 제약이 애플리케이션의
   "먼저 조회해서 있으면 막기"(`existsByLoginId`/`existsByNickname`) 패턴에만 의존하고 있어서
   동시 요청 시 레이스가 가능하다는 걸 확인했다. 반면 `Member.activeProviderKey`는 이미
@@ -74,17 +74,23 @@
 | `GET/POST /webhook/kakao/unlink` | ✅허용(자체 서명 검증) | - | - | - |
 | `PATCH /members/me/onboarding` | 401 | ✅허용 | ⚠️허용 — `MEMBER_NOT_FOUND`(400)로 끝나긴 함, 하지만 `type` 체크가 없어서 통과되는 건 우연 | ⚠️허용 — 위와 동일 |
 | `DELETE /members/me` | 401 | ✅허용 | ⚠️허용 — `MEMBER_NOT_FOUND`(400)로 끝남, 위와 동일 이유 | ⚠️허용 |
-| `GET/POST/PUT/DELETE /addresses/**` | 401 | ✅허용(자기 것만) | 🔴**실제로 성공함** — `POST /addresses`는 회원 존재 여부를 안 봐서, 관리자 UUID를 `memberId`로 하는 배송지가 그냥 생성됨 | 🔴동일 |
+| `GET/POST/PUT/DELETE /addresses/**` | 401 | ✅허용(자기 것만) | 🔴**실제로 성공함** — `POST /addresses`는 회원 존재 여부를 안 봐서, 관리자 id를 `memberId`로 하는 배송지가 그냥 생성됨 | 🔴동일 |
 
 **정리:** `SecurityConfig`는 `/admin/**`만 role로 막고, `/members/**`·`/addresses/**`는 "인증만 되면
 누구나"(`authenticated()`)로 열려 있다. 회원 전용 API에 관리자 토큰이 들어오는 걸 URL 레벨에서
-막지 않고, 대신 "그 UUID로 회원을 찾을 수 있는가"라는 우연한 부작용에 기대고 있다. `AddressService`는
+막지 않고, 대신 "그 id로 회원을 찾을 수 있는가"라는 우연한 부작용에 기대고 있다. `AddressService`는
 그 안전장치조차 없어서 실제로 뚫린다.
+
+(참고: 이 문서 작성 시점엔 PK가 UUID(v7)였으나, 이후 프로젝트 전체가 Long PK로 마이그레이션됐다 —
+아래 케이스 매트릭스의 구체적 예시는 이 변경을 반영해 갱신했고, 발견된 문제의 본질(type 미검증)은
+PK 타입과 무관하게 동일하다.)
 
 **권한 매트릭스 테스트 (신규, 2순위·통합, `@WebMvcTest`+`@WithMockUser` 또는 실제 필터체인):**
 - MEMBER 토큰으로 `/admin/**` 전부 403
 - ADMIN/SUPER_ADMIN 토큰으로 `/members/me/onboarding`, `DELETE /members/me` 호출 시 400(`MEMBER_NOT_FOUND`)으로 끝나는지 — **지금 동작을 고정하는 회귀 테스트**로 일단 추가
-- **ADMIN 토큰으로 `POST /addresses` 호출 시 실제로 무슨 일이 일어나는지 — 지금 코드로는 201이 나오고 admin UUID를 memberId로 하는 row가 생긴다. 이걸 그대로 "허용된 동작"으로 문서화하고 테스트로 고정할지, 아니면 `SecurityConfig`/`AddressService`에 `type=MEMBER` 체크를 추가해서 403/400으로 막을지는 설계 판단이 필요함 — 지금은 테스트만 추가해서 현재 동작을 명시적으로 드러내는 걸 권장(고쳐야 한다고 판단되면 그때 테스트를 반대로 뒤집으면 됨).**
+- **ADMIN 토큰으로 `POST /addresses` 호출 시 실제로 무슨 일이 일어나는지 — 지금 코드로는 201이 나오고 admin id를 memberId로 하는 row가 생긴다. 이걸 그대로 "허용된 동작"으로 문서화하고 테스트로 고정할지, 아니면 `SecurityConfig`/`AddressService`에 `type=MEMBER` 체크를 추가해서 403/400으로 막을지는 설계 판단이 필요함 — 지금은 테스트만 추가해서 현재 동작을 명시적으로 드러내는 걸 권장(고쳐야 한다고 판단되면 그때 테스트를 반대로 뒤집으면 됨).**
+
+  (덧붙임: `SecurityConfig`에는 이후 `TYPE_MEMBER` synthetic authority 기반 매처가 실제로 추가되어 이 구멍은 막혔다 — `/addresses/**`, `/members/**`가 `hasAuthority("TYPE_MEMBER")`로 보호된다. 이 매트릭스는 "찾아낸 문제"의 기록으로 그대로 남겨두고, 실제 수정 여부는 코드 기준으로 확인할 것.)
 
 ---
 
@@ -139,7 +145,7 @@
 - [정상] `BusinessException` → 해당 `ErrorCode`의 status/message로 응답
 - [정상] `ConstraintViolationException` → 400 + 필드별 `ValidationError` 목록. **확인 필요**: 이 예외는 `@Validated` + 파라미터 제약이 있어야 발생하는데, 지금 컨트롤러 어디에도 `@Validated`가 안 보여서 이 핸들러가 실제로 도달 가능한 경로인지 불확실 — 도달 불가능하면 죽은 코드
 - [정상] `MethodArgumentNotValidException`(`@RequestBody @Valid` 검증 실패) → field/global 에러 병합
-- [정상] `MethodArgumentTypeMismatchException`(`@PathVariable UUID`에 UUID 아닌 값) → 400
+- [정상] `MethodArgumentTypeMismatchException`(`@PathVariable Long`에 숫자 아닌 값) → 400
 - [정상] `MissingServletRequestParameterException` → 400
 - [에러] 알 수 없는 `Exception` → 500 + `INTERNAL_ERROR`
 - [경계] **`response.isCommitted()`가 이미 true인 상태에서 예외 발생** → `null` 반환하고 재작성 안 함(스트리밍 응답 등에서만 재현 가능 — 지금 SSE가 없어서 사실상 도달 불가능한 방어 코드, 우선순위 낮음)
@@ -183,12 +189,13 @@
 - [정상] 403/401 JSON 바디가 각각 `ErrorCode.FORBIDDEN`/`UNAUTHORIZED` 포맷과 일치
 
 ### 3.14 회원 온보딩(MemberOnboardingService) — **[3순위·통합]**
-- [정상] 온보딩 완료 후 닉네임/약관동의/마케팅동의 반영, `PENDING_PROFILE`→`ACTIVE`
-- [상태] 이미 `ACTIVE`인 회원이 재호출(닉네임 변경) — 상태 전이는 없고 값만 갱신됨(에러 아님)
+- [정상] 온보딩 완료 후 이름/닉네임/약관동의/마케팅동의 반영, `PENDING_PROFILE`→`ACTIVE`
+- [상태] 이미 `ACTIVE`인 회원이 재호출(정보 변경) — 상태 전이는 없고 값만 갱신됨(에러 아님)
 - [에러] 탈퇴한 회원이 호출 → `MEMBER_ALREADY_WITHDRAWN`
 - [에러] 다른 사람이 쓰는 닉네임으로 변경 시도 → `DUPLICATE_NICKNAME`
 - [경계] **본인이 원래 쓰던 닉네임 그대로 재호출** → 중복으로 안 침(현재 코드의 명시적 예외 처리) — 이전 목록에서 가장 크게 빠졌던 케이스
-- [경계] 요청 DTO 검증: `nickname` blank/21자 이상 → 400(`@NotBlank`/`@Size`), `termsAgreed=false` → 400(`@AssertTrue`)
+- [경계] 요청 DTO 검증: `name`/`nickname` blank/길이초과 → 400(`@NotBlank`/`@Size`), `termsAgreed=false` → 400(`@AssertTrue`)
+- **[신규]** 신규 회원 생성 시점(`CustomOidcUserService`)에 `MemberGrade.isDefault=true`인 행이 없으면 `DEFAULT_MEMBER_GRADE_NOT_FOUND`로 가입 자체가 실패하는지 — `DefaultMemberGradeInitializer`가 기동 시 시드를 넣어주지만, 그 시드가 실패했거나 나중에 지워진 상태를 가정한 회귀 테스트
 
 ### 3.15 회원 탈퇴(MemberWithdrawalService, KakaoUnlinkEventListener) — **[3순위·통합]**
 - [정상] `withdraw()`: RT 삭제 + AT 커트라인 등록 + 트랜잭션 커밋 후에만 카카오 unlink 이벤트 발행
@@ -241,7 +248,7 @@ DB(MySQL)와 Redis는 우리가 소유하고 통제하는 "관리 의존성"이�
 | `member.nickname` UNIQUE | DB 제약 | `existsByNickname()` 선조회 후 저장 | **가능** — 동일 패턴 | 위와 동일 |
 | `member.active_provider_key` UNIQUE | DB 제약 | `saveAndFlush()` 시도 → `DataIntegrityViolationException` 캐치 → 재조회 | **이미 올바르게 처리됨** — DB 제약을 신뢰하고 실패를 캐치하는 정석 패턴 | 이 패턴이 계속 유지되는지 회귀 테스트만 있으면 됨(이미 3.9에 포함) |
 | `refresh_token_backup (role, owner_id)` UNIQUE | DB 제약 | `findByRoleAndOwnerId()` 후 `rotate()` 또는 `save()` | 이론상 가능하지만 실제로는 `compareAndSave()`의 Redis Lua CAS(또는 DB CAS `compareAndSet`)가 상위에서 이미 동시성을 막고 있어서 이 테이블에 직접 동시 insert가 발생할 상황 자체가 드묾 — 낮은 우선순위 | Redis/DB CAS가 정상 동작하는 한 문제없다는 전제를 문서로 남기고, CAS 테스트(3.4)로 사실상 커버 |
-| 배송지 "회원당 기본 1개" | **DB 제약 없음, 애플리케이션 코드만** | `isFirstAddress`/`clearDefaultForMember` — 조회 후 조건부 처리 | **가능, 그리고 막을 DB 제약이 아예 없음** | 순차 테스트로 못 잡는 영역 — 5번 섹션 체크리스트로 이동(이미 DESIGN_NOTES에 알려진 한계로 기록돼 있음) |
+| 배송지 "회원당 기본 1개" | **DB 제약 추가됨**(`address.is_default_key` 생성 컬럼 + UNIQUE, 목표 DDL과 동일 기법) | `isFirstAddress`/`clearDefaultForMember`(1차) + DB UNIQUE(2차 안전망) | 애플리케이션 로직 레이스는 여전히 가능하지만, DB가 최종적으로 2개 이상 존재하는 걸 막아준다 — 레이스가 나면 앱 로직이 아니라 `DataIntegrityViolationException`으로 드러남(지금 `AddressService`는 이 예외를 아직 안 잡음, 500으로 샐 수 있음) | 동시 요청으로 실제 DB에 두 번째 기본 배송지가 들어가려 할 때 `DataIntegrityViolationException`이 나는지, 그리고 그게 지금처럼 500으로 새는 게 맞는지(Admin/Member 유니크 제약처럼 캐치해서 409 등으로 바꿀지) 확인하는 테스트. `ddl-auto:update`가 기존 테이블에 생성 컬럼을 실제로 만들어주는지부터 로컬에서 검증 필요(Address 엔티티 Javadoc 참고) |
 
 ---
 
@@ -253,7 +260,7 @@ DB(MySQL)와 Redis는 우리가 소유하고 통제하는 "관리 의존성"이�
 **동시성/TOCTOU:**
 - Admin 계정 발급 동시 요청 시 `login_id` 중복 (위 4번 섹션)
 - 회원 닉네임 변경 동시 요청 시 `nickname` 중복 (위 4번 섹션)
-- 배송지 동시 생성/삭제 시 기본 배송지가 0개 또는 2개 이상이 되는 경우 (위 4번 섹션 — DB 제약 자체가 없어서 가장 위험)
+- 배송지 동시 생성/삭제 시 기본 배송지가 0개 또는 2개 이상이 되는 경우 (위 4번 섹션 — "2개 이상"은 이제 DB UNIQUE가 막아주지만, "0개"가 되는 경우는 여전히 DB가 못 막는다 — 이 UNIQUE는 "최대 1개"만 강제하지 "최소 1개"는 강제 안 함)
 
 **여러 흐름이 합쳐질 때만 나타나는 결함:**
 - **RT 재발급(`AuthController.reissue()`)과 회원탈퇴(`MemberWithdrawalService.withdraw()`)가 거의 동시에 실행되는 경우.** `withdraw()`가 커밋되기 직전에 `reissue()`가 옛 상태(`isWithdrawn()=false`)를 읽고 `compareAndSave()`로 새 RT를 정상 발급해버리면, 탈퇴 처리 완료 직후에도 새로 발급된 RT/AT로 계속 인증된 요청을 보낼 수 있는 창이 생긴다. 이건 어느 한쪽의 단위 테스트로도 안 잡힌다 — 두 유스케이스가 같은 계정에 동시에 오는 시나리오 자체가 테스트 매트릭스 밖이다. (완화책 후보: `withdraw()`가 비관적 락으로 회원 row를 잠그거나, `reissue()`가 `compareAndSave()' 성공 직후 다시 한번 회원 상태를 확인하는 것 — 지금은 둘 다 없음.)

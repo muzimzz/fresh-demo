@@ -8,7 +8,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.time.LocalDateTime;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
@@ -43,7 +42,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         if (jwtTokenProvider.validateToken(token)) {
-            UUID id = jwtTokenProvider.getId(token);
+            Long id = jwtTokenProvider.getId(token);
             TokenType type = jwtTokenProvider.getType(token);
             String role = jwtTokenProvider.getRole(token);
 
@@ -77,7 +76,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
      * (fail-open). Redis 순간 장애 하나로 인증이 필요한 API 전체가 막히는 것보다는, 그 순간만
      * 이 방어선이 비활성화되는 쪽이 서비스 가용성 관점에서 낫다는 판단.
      */
-    private boolean isValidAfterCutoff(String role, UUID id, LocalDateTime issuedAt) {
+    private boolean isValidAfterCutoff(String role, Long id, LocalDateTime issuedAt) {
         try {
             return accessTokenValidAfterRepository.isValidAfter(role, id, issuedAt);
         } catch (DataAccessException e) {

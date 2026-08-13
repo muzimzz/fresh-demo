@@ -24,7 +24,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 /**
- * haeyaji의 SecurityConfig에서 카카오만 남기고, oauth2/naver/google 관련 설정을 제거한 버전.
+ * 카카오만 지원하는 버전의 SecurityConfig — 다른 소셜 로그인(naver/google 등) 관련 설정은 없다.
  * ASYNC/ERROR dispatcher permitAll 부분은 이 프로젝트에서 겪었던 SSE 재디스패치 403/500 버그의
  * 해결책이라 그대로 가져왔다 — SSE(또는 비슷한 비동기 스트리밍 응답)를 쓸 계획이 없다면 없어도 무방하지만,
  * 나중에 추가할 걸 대비해 미리 넣어두는 것도 나쁘지 않다.
@@ -48,7 +48,7 @@ public class SecurityConfig {
 
     @Bean
     public PasswordEncoder passwordEncoder() {
-        // 관리자 비밀번호 해싱용. haeyaji/fm-backend와 동일하게 델리게이팅 인코더(기본 bcrypt) 사용.
+        // 관리자 비밀번호 해싱용. fm-backend와 동일하게 델리게이팅 인코더(기본 bcrypt) 사용.
         return PasswordEncoderFactories.createDelegatingPasswordEncoder();
     }
 
@@ -57,7 +57,7 @@ public class SecurityConfig {
 
         http
                 .csrf(csrf -> csrf.disable()) // JWT + httpOnly 쿠키 조합이면 세션 기반 CSRF는 해당 없음.
-                                               // 폼 기반 흐름을 섞어 쓴다면 haeyaji처럼 CookieCsrfTokenRepository로 켤 것.
+                                               // 폼 기반 흐름을 섞어 쓴다면 CookieCsrfTokenRepository로 켤 것.
 
                 .cors(Customizer.withDefaults())
 
@@ -100,6 +100,11 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/admin").hasAuthority("ROLE_SUPER_ADMIN")
                         .requestMatchers(HttpMethod.DELETE, "/admin/**").hasAuthority("ROLE_SUPER_ADMIN")
                         .requestMatchers("/admin/**").hasAnyAuthority("ROLE_ADMIN", "ROLE_SUPER_ADMIN")
+                        // 회원 전용 API — 관리자 토큰이 authenticated() 하나로만 막혀 있으면 그냥 통과돼버림
+                        // (예: 관리자 토큰으로 POST /addresses를 호출하면 존재 확인 없이 admin id를
+                        // memberId로 하는 배송지가 생성됨). role이 아니라 TYPE_MEMBER로 막아서, 회원
+                        // role 종류가 나중에 늘어나도 이 규칙은 안 건드려도 되게 한다.
+                        .requestMatchers("/addresses/**", "/members/**").hasAuthority("TYPE_MEMBER")
                         .anyRequest().authenticated())
         ;
 

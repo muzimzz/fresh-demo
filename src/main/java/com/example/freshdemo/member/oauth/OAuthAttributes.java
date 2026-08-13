@@ -35,12 +35,13 @@ public record OAuthAttributes(
                 .build();
     }
 
-    public Member toEntity() {
+    public Member toEntity(Long memberGradeId) {
         return Member.builder()
                 .socialType(socialType)
                 .socialTypeId(socialTypeId)
                 .email(email)
                 .role(MemberRole.ROLE_USER)
+                .memberGradeId(memberGradeId)
                 .build();
     }
 }

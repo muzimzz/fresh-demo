@@ -12,9 +12,9 @@ import com.example.freshdemo.common.exception.BusinessException;
 import com.example.freshdemo.common.exception.ErrorCode;
 import jakarta.servlet.http.HttpServletResponse;
 import java.time.Duration;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -55,7 +55,7 @@ public class AdminService {
         }
 
         String roleAuthority = admin.getRole().toAuthority();
-        UUID adminId = admin.getId();
+        Long adminId = admin.getId();
 
         // 관리자 로그인엔 "자동로그인" 체크박스 개념이 없다(스펙도 회원 섹션에만 있음) — 항상 영속 쿠키.
         String accessToken = jwtTokenProvider.createAccessToken(adminId, TokenType.ADMIN, roleAuthority);
@@ -72,7 +72,7 @@ public class AdminService {
     }
 
     @Transactional
-    public Admin register(AdminRegisterRequest request, UUID requesterId) {
+    public Admin register(AdminRegisterRequest request, Long requesterId) {
         Admin requester = adminRepository.findById(requesterId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ADMIN_NOT_FOUND));
 
@@ -85,15 +85,22 @@ public class AdminService {
         }
 
         String encodedPassword = passwordEncoder.encode(request.password());
-        Admin created = adminRepository.save(request.toEntity(encodedPassword));
 
-        log.info("event=ADMIN_REGISTERED actorId={} targetId={} targetRole={}",
-                requesterId, created.getId(), created.getRole());
+        Admin created;
+        try {
+            created = adminRepository.saveAndFlush(request.toEntity(encodedPassword));
+            log.info("event=ADMIN_REGISTERED actorId={} targetId={} targetRole={}",
+                    requesterId, created.getId(), created.getRole());
+        } catch (DataIntegrityViolationException e) {
+            log.warn("event=ADMIN_REGISTER_FAILED actorId={} reason=DUPLICATE_LOGIN_ID_RACE", requesterId);
+            throw new BusinessException(ErrorCode.DUPLICATE_LOGIN_ID, e);
+        }
+
         return created;
     }
 
     @Transactional
-    public void deleteAdmin(UUID targetAdminId, UUID requesterId) {
+    public void deleteAdmin(Long targetAdminId, Long requesterId) {
         Admin requester = adminRepository.findById(requesterId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ADMIN_NOT_FOUND));
 

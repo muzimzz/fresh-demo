@@ -33,23 +33,23 @@
 `event=대문자_스네이크케이스` 형식. 로그 집계 도구(그라파나 Loki, ELK 등)에서 `event="XXX"`로
 필터링하는 게 전제라, 자유 텍스트 문장이 아니라 고정된 키워드로 남긴다.
 
-현재 쓰이는 이벤트명:
+이 문서는 전체 이벤트명 목록을 따로 유지하지 않는다 — 도메인마다 이벤트가 계속 늘어나서 목록을
+계속 최신 상태로 맞추는 게 더 손해다. 대신 접미사를 고르는 기준만 정해둔다.
 
-```
-ADMIN_LOGIN_SUCCESS / ADMIN_LOGIN_FAILED
-ADMIN_REGISTERED / ADMIN_DELETED
-MEMBER_LOGIN_FAILED
-REFRESH_TOKEN_REUSE_SUSPECTED
-HTTP_ACCESS
-EXTERNAL_API_CALL / EXTERNAL_API_CALL_FAILED
-SCHEDULER_START / SCHEDULER_END / SCHEDULER_FAILED
-REDIS_SAVE_FAILED / REDIS_FIND_FAILED / REDIS_DELETE_FAILED / REDIS_CAS_FAILED
-DB_BACKUP_SAVE_FAILED / DB_BACKUP_DELETE_FAILED
-ACCESS_TOKEN_VALID_AFTER_CHECK_FAILED
-```
+**결과가 성공/실패/의심으로 갈리는 이벤트**는 `_SUCCESS` / `_FAILED` / `_SUSPECTED`를 쓴다.
+(예: `ADMIN_LOGIN_SUCCESS`/`ADMIN_LOGIN_FAILED`, `REFRESH_TOKEN_REUSE_SUSPECTED`)
 
-새 이벤트를 추가할 때는 `동사_상태` 조합(`_SUCCESS`, `_FAILED`, `_SUSPECTED`)을 따르고, 비슷한
-기존 이벤트가 있으면 이름 패턴을 맞춘다.
+**성공/실패로 안 갈리고 어떤 처리 과정 자체를 나타내는 이벤트**는 `_START` / `_END` / `_CLEANUP`처럼
+그 사실을 그대로 드러내는 접미사를 쓴다. (예: `SCHEDULER_START`/`SCHEDULER_END`,
+`REFRESH_TOKEN_BACKUP_CLEANUP`)
+
+**위 두 경우에 안 맞으면** 접미사를 억지로 끼워 맞추지 말고, 이 이벤트가 뭘 의미하는지 스네이크케이스
+명사/동사구로 명확하게 드러나게 자유롭게 짓는다.
+
+접미사 형식 자체보다 중요한 건 **일관성**이다 — 로그 집계 도구에서 `event=`로 필터링/알림 규칙을
+걸 걸 전제로 하는 이름이라, 같은 종류의 상황(예: 같은 종류의 실패)을 가리키는 이벤트에 매번 다른
+이름을 새로 만들면 필터링이 흩어진다. 새 이벤트를 추가하기 전에 자기 도메인이나 비슷한 도메인에
+이미 있는 로그를 한 번 찾아보고 이름 패턴을 맞추는 걸 습관으로 삼는다.
 
 ### 2.2 로그 레벨 기준
 
@@ -139,7 +139,8 @@ ERROR event=KAKAO_UNLINK_WEBHOOK_PROCESSING_FAILED userId={maskedUserId}   # 예
 그 자체로 인증 수단이라, 로그에 한 글자라도 남으면 그 로그를 볼 수 있는 사람 전부가 그 세션을
 탈취할 수 있다. 반면 `jti`(토큰 인스턴스 식별자 클레임)는 서명이 없는 순수 라벨이라 그 자체로는
 아무 권한도 증명하지 못하므로 평문으로 로그에 남겨도 안전하다 — `REFRESH_TOKEN_REUSE_SUSPECTED`
-로그가 `jti`를 평문으로 남기는 이유(3.2 참고).
+로그가 `jti`를 평문으로 남기는 이유다. jti/RT 로테이션 자체의 설계 배경은 `DESIGN_NOTES.md` 1번
+항목 참고.
 
 **비밀번호는 해시값조차 로그에 남기지 않는다.** bcrypt 해시라도 로그에 남을 이유가 없다.
 
@@ -169,24 +170,7 @@ ERROR event=KAKAO_UNLINK_WEBHOOK_PROCESSING_FAILED userId={maskedUserId}   # 예
   (이메일/전화번호/주소는 서비스 운영상 평문 조회가 필요해서 애초에 암호화 대상이 아니고, 마스킹만
   적용된다 — DB 자체는 평문 저장, 로그/응답 노출 시에만 마스킹).
 
-### 3.2 jti는 왜 평문으로 로그에 남겨도 되는가
-
-`jti`는 토큰의 "인스턴스 식별자"일 뿐, 그 자체로는 서명도 권한도 없는 라벨이다. 이 값만 가지고는
-로그인도, 인증도 할 수 없다. 반면 refreshToken 원문 전체는 서명까지 포함된 완전한 인증 수단이라
-로그에 남으면 안 된다. 이 구분(credential vs label) 때문에, RT 재사용 의심 로그에는 jti를 평문으로
-남겨서 "정확히 어떤 토큰 인스턴스가 재사용됐는지" 추적할 수 있게 했다.
-
-### 3.3 AT 무효화 체크는 왜 fail-open인가
-
-`AccessTokenValidAfterRepository`(회원 탈퇴/RT 탈취 의심 시 accessToken을 즉시 무효화하는 장치)는
-인증이 필요한 모든 요청마다 Redis를 확인해야 한다. 이 체크에는 DB 백업을 두지 않았다 — 매 요청마다
-DB까지 보게 하면 그 자체가 성능 병목이 된다. 대신 Redis 장애 시엔 이 2차 방어선을 건너뛰고 요청을
-통과시킨다(WARN 로그만 남김). Redis 순간 장애 하나 때문에 인증이 필요한 API 전체가 막히는 것보다,
-그 순간만 이 방어선이 비활성화되는 쪽이 서비스 가용성 관점에서 낫다고 판단했다. (반면
-refreshToken 저장소는 DB write-through 백업을 둔다 — 로그인/재발급 자체가 막히는 걸 더 심각하게
-봤기 때문. 두 저장소가 다른 정책을 쓰는 이유이기도 하다.)
-
-### 3.4 로컬/운영 로그 포맷이 다른 이유
+### 3.2 로컬/운영 로그 포맷이 다른 이유
 
 로컬은 사람이 읽기 좋은 콘솔 텍스트(`%F:%line`로 IntelliJ 클릭 이동까지 지원), 운영은
 `logstash-logback-encoder`로 JSON 구조화 로그를 남긴다 — ELK/Loki/CloudWatch 같은 수집기가
@@ -194,7 +178,7 @@ refreshToken 저장소는 DB write-through 백업을 둔다 — 로그인/재발
 하기 때문이다. 운영은 `AsyncAppender`로 로깅 I/O가 요청 스레드를 막지 않게 하고, `%line` 같은
 caller data는 계산 비용 때문에 운영에서는 끈다.
 
-### 3.5 HTTP 접근 로그를 상태코드로 나눈 이유
+### 3.3 HTTP 접근 로그를 상태코드로 나눈 이유
 
 정상 응답(2xx/3xx)은 상태코드+소요시간만 INFO로 남기고, 에러 응답(4xx/5xx)만 바디까지 남긴다.
 매 요청마다 바디를 통째로 남기면 운영 환경에서 로그 볼륨이 감당이 안 되기 때문 — 반대로 에러는

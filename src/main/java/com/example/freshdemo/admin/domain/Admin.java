@@ -1,6 +1,6 @@
 package com.example.freshdemo.admin.domain;
 
-import com.example.freshdemo.common.jpa.MutableBaseEntity;
+import com.example.freshdemo.common.jpa.LongMutableBaseEntity;
 import com.example.freshdemo.common.logging.PiiMasker;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -14,8 +14,9 @@ import lombok.NoArgsConstructor;
 
 /**
  * 백오피스 관리자 계정. fm-backend(freshmarket)의 Admin 엔티티를 참고해 가져왔다.
- * PK는 fm-backend의 Long AUTO_INCREMENT 대신 UUID(v7)를 쓴다 — Member를 포함해 이 프로젝트
- * 전역이 UuidBaseEntity/MutableBaseEntity 컨벤션을 쓰고 있어서 그대로 맞췄다.
+ * PK는 fm-backend와 동일하게 Long AUTO_INCREMENT — 원래는 열거(enumeration) 공격 방지를 위해
+ * UUID(v7)를 쓰다가, 이후 프로젝트 전역을 Long PK로 통일하기로 결정하며 바뀌었다
+ * (트레이드오프는 LongMutableBaseEntity, DESIGN_NOTES.md 참고).
  *
  * 비밀번호 확인은 엔티티가 아니라 AdminService에서 PasswordEncoder로 한다(엔티티에 인코더 의존성을
  * 넣지 않기 위함 — Member 쪽에 별도 비밀번호 필드가 없는 것과 같은 이유로 도메인을 얇게 유지).
@@ -24,7 +25,7 @@ import lombok.NoArgsConstructor;
 @Getter
 @Table(name = "admin")
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class Admin extends MutableBaseEntity {
+public class Admin extends LongMutableBaseEntity {
 
     @Column(name = "login_id", nullable = false, unique = true, length = 50)
     private String loginId;

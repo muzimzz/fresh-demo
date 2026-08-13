@@ -5,7 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 
 /**
- * haeyaji의 ErrorCode에서 인증/회원/탈퇴 관련 코드만 추려온 것.
+ * 인증/회원/탈퇴 관련 에러코드로 시작한다.
  * 새 프로젝트의 다른 도메인 에러코드는 이 enum에 계속 추가하면 된다.
  */
 @Getter
@@ -36,6 +36,9 @@ public enum ErrorCode implements ResponseCode {
 
     // 배송지(Address)
     ADDRESS_NOT_FOUND(HttpStatus.BAD_REQUEST, "배송지를 찾을 수 없습니다."),
+
+    // 회원 등급(MemberGrade)
+    DEFAULT_MEMBER_GRADE_NOT_FOUND(HttpStatus.INTERNAL_SERVER_ERROR, "기본 회원 등급이 설정되어 있지 않습니다."),
 
     ;
 

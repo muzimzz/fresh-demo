@@ -4,7 +4,6 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ClassPathResource;
@@ -57,7 +56,7 @@ public class RefreshTokenRepository {
     private final RefreshTokenBackupRepository backupRepository;
 
     @Transactional
-    public void save(String role, UUID id, String refreshToken, Duration ttl) {
+    public void save(String role, Long id, String refreshToken, Duration ttl) {
         String tokenHash = TokenHasher.sha256(refreshToken);
         trySaveBackup(role, id, tokenHash, LocalDateTime.now().plus(ttl));
 
@@ -73,7 +72,7 @@ public class RefreshTokenRepository {
      * 돌려주는 find()가 있었는데(호출부가 하나도 없어서 죽은 코드였음), 해싱 방식으로 바꾸면서
      * "저장된 원문을 돌려주는" 형태 자체가 더 이상 성립하지 않아 이 메서드로 대체했다.
      */
-    public boolean matches(String role, UUID id, String candidateToken) {
+    public boolean matches(String role, Long id, String candidateToken) {
         String candidateHash = TokenHasher.sha256(candidateToken);
         try {
             String stored = redisTemplate.opsForValue().get(key(role, id));
@@ -87,7 +86,7 @@ public class RefreshTokenRepository {
     }
 
     @Transactional
-    public void delete(String role, UUID id) {
+    public void delete(String role, Long id) {
         try {
             backupRepository.deleteByRoleAndOwnerId(role, id);
         } catch (DataAccessException e) {
@@ -111,7 +110,7 @@ public class RefreshTokenRepository {
      *         구분 없이 재사용으로 간주해 세션을 무효화한다.
      */
     @Transactional
-    public boolean compareAndSave(String role, UUID id, String oldRefreshToken, String newRefreshToken, Duration ttl) {
+    public boolean compareAndSave(String role, Long id, String oldRefreshToken, String newRefreshToken, Duration ttl) {
         LocalDateTime expiresAt = LocalDateTime.now().plus(ttl);
         String oldHash = TokenHasher.sha256(oldRefreshToken);
         String newHash = TokenHasher.sha256(newRefreshToken);
@@ -143,7 +142,7 @@ public class RefreshTokenRepository {
      * — 대가로 "DB 백업이 살짝 stale하거나 이번 회차는 아예 안 남을 수 있다"는 리스크를 감수한다
      * (Redis 자체가 죽어있는 진짜 장애 상황과 동시에 DB까지 죽는 이중 장애가 아닌 이상 문제되지 않음).
      */
-    private void trySaveBackup(String role, UUID id, String tokenHash, LocalDateTime expiresAt) {
+    private void trySaveBackup(String role, Long id, String tokenHash, LocalDateTime expiresAt) {
         try {
             saveBackup(role, id, tokenHash, expiresAt);
         } catch (DataAccessException e) {
@@ -152,7 +151,7 @@ public class RefreshTokenRepository {
         }
     }
 
-    private void saveBackup(String role, UUID id, String tokenHash, LocalDateTime expiresAt) {
+    private void saveBackup(String role, Long id, String tokenHash, LocalDateTime expiresAt) {
         backupRepository.findByRoleAndOwnerId(role, id)
                 .ifPresentOrElse(
                         existing -> existing.rotate(tokenHash, expiresAt),
@@ -165,13 +164,13 @@ public class RefreshTokenRepository {
                 );
     }
 
-    private Optional<String> findHashFromBackup(String role, UUID id) {
+    private Optional<String> findHashFromBackup(String role, Long id) {
         return backupRepository.findByRoleAndOwnerId(role, id)
                 .filter(backup -> !backup.isExpired(LocalDateTime.now()))
                 .map(RefreshTokenBackup::getTokenHash);
     }
 
-    private String key(String role, UUID id) {
+    private String key(String role, Long id) {
         return KEY_PREFIX + role + ":" + id;
     }
 }

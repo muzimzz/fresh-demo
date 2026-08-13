@@ -16,7 +16,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
  * 모든 요청의 컨텍스트(traceId, method, uri, clientIp)를 MDC 에 적재하는 필터.
- * haeyaji의 MdcLoggingFilter를 그대로 이식.
+ * 검증된 필터 구현을 그대로 이식.
  *
  * "traceId"라는 이름을 쓰지만 OpenTelemetry 같은 정식 분산 추적(distributed tracing) 라이브러리가
  * 아니다 — span 트리(부모-자식 인과관계), 자동 계측(HTTP/DB/Redis 호출마다 자동으로 구간 기록) 같은

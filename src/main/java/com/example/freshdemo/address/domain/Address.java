@@ -1,33 +1,38 @@
 package com.example.freshdemo.address.domain;
 
-import com.example.freshdemo.common.jpa.MutableBaseEntity;
+import com.example.freshdemo.common.jpa.LongMutableBaseEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
-import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 /**
- * 회원 배송지. Member와 마찬가지로 @ManyToOne 대신 memberId(UUID)를 직접 들고 있다
+ * 회원 배송지. Member와 마찬가지로 @ManyToOne 대신 memberId(Long)를 직접 들고 있다
  * (fm-backend의 Admin 연관관계 설계와 같은 이유 — 연관관계 매핑 없이 ID만으로 소유권을 확인해도
  * 충분하고, 지연 로딩/N+1 걱정을 줄일 수 있어서).
  *
- * 목표 DDL에는 "기본 배송지 1개만 허용"을 MySQL generated column(active 트릭)으로 강제하는
- * 설계가 있었지만, 여기서는 Hibernate ddl-auto:update로 그 패턴을 깔끔하게 재현하기 어려워
- * 서비스 레이어(AddressService)에서 트랜잭션으로 "기존 기본 배송지 해제 후 새로 지정"하는
- * 방식으로 대신한다.
+ * "기본 배송지 1개만 허용"은 목표 DDL과 같은 방식(MySQL generated column + UNIQUE)으로 DB
+ * 레벨에서도 강제한다 — isDefaultKey 참고. 다만 이게 서비스 레이어(AddressService)의
+ * "기존 기본 배송지 해제 후 새로 지정" 로직을 대체하는 건 아니다 — 어느 행을 새 기본으로 할지
+ * 고르는 건 여전히 앱이 해야 하고, 이 제약은 그 로직에 버그가 있어도 DB가 최종적으로 막아주는
+ * 안전망이다.
+ *
+ * 주의: 이 프로젝트는 Flyway 없이 ddl-auto:update로 스키마를 관리한다. GENERATED ALWAYS AS
+ * 컬럼을 기존 테이블에 새로 추가하는 ALTER TABLE을 Hibernate가 정확히 만들어내는지는 검증이
+ * 필요하다 — 로컬에서 안 먹으면(컬럼이 안 생기거나 UNIQUE가 안 걸리면) address 테이블을
+ * 드롭하고 재기동하거나, 수동으로 ALTER TABLE을 한 번 실행해야 한다.
  */
 @Entity
 @Getter
 @Table(name = "address")
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class Address extends MutableBaseEntity {
+public class Address extends LongMutableBaseEntity {
 
     @Column(name = "member_id", nullable = false)
-    private UUID memberId;
+    private Long memberId;
 
     @Column(nullable = false, length = 50)
     private String recipient;
@@ -47,8 +52,19 @@ public class Address extends MutableBaseEntity {
     @Column(name = "is_default", nullable = false)
     private boolean isDefault;
 
+    /**
+     * 회원별 기본 배송지 1개 강제용 계산 컬럼. is_default=true인 행만 member_id 값을 갖고,
+     * 나머지는 NULL이 된다 — MySQL UNIQUE는 NULL을 여러 개 허용하므로 "기본이 아닌 행끼리"는
+     * 검사에서 빠지고, "같은 회원의 기본 배송지가 2개"일 때만 uk_address_single_default_per_member가
+     * 걸린다(목표 DDL 3장의 조건부 유일성 기법과 동일). 앱이 직접 값을 넣거나 바꾸지 않는다
+     * (insertable/updatable=false) — MySQL이 매번 다시 계산한다.
+     */
+    @Column(name = "is_default_key", insertable = false, updatable = false, unique = true,
+            columnDefinition = "BIGINT GENERATED ALWAYS AS (CASE WHEN is_default THEN member_id ELSE NULL END) STORED")
+    private Long isDefaultKey;
+
     @Builder
-    private Address(UUID memberId, String recipient, String phone, String zipcode,
+    private Address(Long memberId, String recipient, String phone, String zipcode,
                      String roadAddress, String detailAddress, boolean isDefault) {
         this.memberId = memberId;
         this.recipient = recipient;

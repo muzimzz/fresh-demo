@@ -39,7 +39,7 @@ public class JwtTokenProvider {
         this.refreshTokenValidityMs = refreshTokenValidityMs;
     }
 
-    public String createAccessToken(UUID id, TokenType type, String role) {
+    public String createAccessToken(Long id, TokenType type, String role) {
         return Jwts.builder()
                 .subject(String.valueOf(id))
                 .claim("type", type.name())
@@ -67,9 +67,9 @@ public class JwtTokenProvider {
      * 남기면 안 되는 것과는 다른 얘기다. AT는 재사용 감지 대상이 아니라서(같은 AT를 수명 내내
      * 반복 사용하는 게 정상 동작) jti를 안 넣는다 — 지금 쓸 곳이 없는 클레임을 미리 넣어두지 않음.
      */
-    public String createRefreshToken(UUID id, TokenType type, String role, boolean remember) {
+    public String createRefreshToken(Long id, TokenType type, String role, boolean remember) {
         return Jwts.builder()
-                .id(UUID.randomUUID().toString())
+                .id(UUID.randomUUID().toString()) // jti: 회원/관리자 id와 무관한 순수 랜덤 토큰 인스턴스 식별자 — PK가 Long이 돼도 그대로 UUID
                 .subject(String.valueOf(id))
                 .claim("type", type.name())
                 .claim("role", role)
@@ -95,8 +95,8 @@ public class JwtTokenProvider {
         }
     }
 
-    public UUID getId(String token) {
-        return UUID.fromString(parseClaims(token).getSubject());
+    public Long getId(String token) {
+        return Long.valueOf(parseClaims(token).getSubject());
     }
 
     public TokenType getType(String token) {

@@ -14,7 +14,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.time.Duration;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
@@ -46,7 +45,7 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
         Member member = oidcUser.getMember();
         boolean rememberMe = resolveRememberMe(request);
 
-        UUID memberId = member.getId();
+        Long memberId = member.getId();
         MemberRole memberRole = member.getRole();
         String role = memberRole.name();
 

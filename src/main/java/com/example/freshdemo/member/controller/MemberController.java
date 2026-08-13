@@ -24,7 +24,7 @@ public class MemberController {
     private final MemberOnboardingService memberOnboardingService;
 
     /**
-     * 카카오 최초 로그인(PENDING_PROFILE) 이후 필수 온보딩 정보(닉네임+약관동의)를 채워 ACTIVE로 넘긴다.
+     * 카카오 최초 로그인(PENDING_PROFILE) 이후 필수 온보딩 정보(이름+닉네임+약관동의)를 채워 ACTIVE로 넘긴다.
      * 이 값이 채워지기 전까진 로그인 리다이렉트의 pendingProfile=true가 계속 내려간다 — 프론트는
      * 그 신호를 보고 로그인할 때마다 이 화면으로 강제 리다이렉트하면 된다.
      */
@@ -34,7 +34,7 @@ public class MemberController {
             @RequestBody @Valid MemberOnboardingRequest request
     ) {
         Member member = memberOnboardingService.completeOnboarding(
-                userDetails.getId(), request.nickname(), request.marketingAgreed());
+                userDetails.getId(), request.name(), request.nickname(), request.marketingAgreed());
         return ResponseEntity.ok(ApiResponse.of(MemberResponse.from(member)));
     }
 }

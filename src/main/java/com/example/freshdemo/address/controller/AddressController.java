@@ -8,7 +8,6 @@ import com.example.freshdemo.auth.CustomUserDetails;
 import com.example.freshdemo.common.response.ApiResponse;
 import jakarta.validation.Valid;
 import java.util.List;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -52,7 +51,7 @@ public class AddressController {
     @PutMapping("/{addressId}")
     public ResponseEntity<ApiResponse<AddressResponse>> update(
             @AuthenticationPrincipal CustomUserDetails userDetails,
-            @PathVariable UUID addressId,
+            @PathVariable Long addressId,
             @RequestBody @Valid AddressRequest request
     ) {
         Address address = addressService.update(userDetails.getId(), addressId, request);
@@ -62,7 +61,7 @@ public class AddressController {
     @DeleteMapping("/{addressId}")
     public ResponseEntity<ApiResponse<Void>> delete(
             @AuthenticationPrincipal CustomUserDetails userDetails,
-            @PathVariable UUID addressId
+            @PathVariable Long addressId
     ) {
         addressService.delete(userDetails.getId(), addressId);
         return ResponseEntity.ok(ApiResponse.of(null));

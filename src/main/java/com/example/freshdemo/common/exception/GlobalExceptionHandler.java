@@ -25,7 +25,7 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 import org.springframework.web.util.WebUtils;
 
 /**
- * haeyaji의 GlobalExceptionHandler를 그대로 가져온 것.
+ * 검증된 예외 처리 정책을 그대로 가져왔다.
  * 로깅 정책(4xx=WARN 스택트레이스 없음, 5xx=ERROR 스택트레이스 포함)은 검증된 부분이라 그대로 유지 권장.
  */
 @Slf4j

@@ -23,7 +23,7 @@
 ## 2. 카카오 로그인 & 회원 식별
 
 - ✅ Kakao OIDC `scope=openid` 명시 필요 여부 확인. Spring Security의 oauth2Login은 scope 파라미터를 항상 명시적으로 보내는 구조라 openid를 빼면 안 됨 — 기존 설정이 이미 맞았음(검증만 하고 코드 변경 없음).
-- ✅ `provider_user_id`(카카오 `sub`)와 내부 `memberId`(UUID PK)는 완전히 분리된 필드. 애초부터 그렇게 구현돼 있었음.
+- ✅ `provider_user_id`(카카오 `sub`)와 내부 `memberId`(Long PK)는 완전히 분리된 필드. 애초부터 그렇게 구현돼 있었음.
 - ✅ 카카오 `sub`이 unlink→relink 후에도 값이 안 바뀐다는 것을 카카오 공식 지원 답변(devtalk, 2026-03)으로 확인 — `active_provider_key` 설계가 안전하게 성립하는 전제.
 - ✅ **`active_provider_key` 도입.** `"{social_type}:{social_type_id}"` 형태의 필드 하나에만 UNIQUE를 걸고, `social_type`/`social_type_id` 자체의 유니크 제약은 제거. 탈퇴 시 이 필드를 null로 비워서 이력(social_type_id 등)은 행에 남기되 같은 소셜 계정으로 재가입할 자리를 비켜줌.
 - ✅ `reactivate()` 제거. 재가입은 옛 행을 되살리는 게 아니라 새 행을 만드는 방식으로 전환(`CustomOidcUserService`, `MemberWithdrawalService`가 전부 `findByActiveProviderKey` 기준으로 전환됨).
@@ -46,7 +46,7 @@
 
 ## 5. 관리자(Admin)
 
-- ✅ JWT 기반 로그인/계정 발급/삭제(SUPER_ADMIN 전용). fm-backend의 Admin 엔티티를 참고하되 PK는 UUID(v7)로 단순화(fm-backend는 Long AUTO_INCREMENT).
+- ✅ JWT 기반 로그인/계정 발급/삭제(SUPER_ADMIN 전용). fm-backend의 Admin 엔티티를 참고했고, PK도 fm-backend와 동일한 Long AUTO_INCREMENT(9번 항목의 전면 통일 결정 참고).
 - ✅ 계정 존재 여부 비노출(로그인 실패 시 "없음"과 "비번 틀림"을 같은 에러로 응답).
 - ✅ 관리자 액션 감사 로그. 로그인 성공/계정 발급/계정 삭제에 `event=ADMIN_LOGIN_SUCCESS` / `ADMIN_REGISTERED` / `ADMIN_DELETED`로 actorId(요청자)/targetId(대상)만 남김 — 권한 상승·회수로 직결되는 민감 액션이라 "누가 언제 누구에게" 했는지는 추적 가능해야 한다는 원칙(8번 항목의 "비즈니스 로그는 id만" 원칙과 동일선상).
 - ✅ **관리자 로그인 실패 로그(`ADMIN_LOGIN_FAILED`).** 계정 없음(`reason=NO_SUCH_ACCOUNT`, loginId로 식별)과 비번 틀림(`reason=WRONG_PASSWORD`, adminId로 식별)을 로그에서만 구분해서 남김 — HTTP 응답은 기존처럼 계정 존재 여부를 안 드러내려고 둘 다 동일한 에러 유지, 구분은 우리끼리 보는 로그에만 존재. 브루트포스(같은 계정에 비번만 계속 틀림)와 계정 나열 공격(존재하지 않는 아이디를 계속 시도)을 로그로 구분해서 보기 위함.
@@ -86,11 +86,11 @@
 
 **상세 DDL**(member_grade/member/address/admin, `public_id BINARY(16)`, generated column 포함)
 - ✅ `active_provider_key` — 이번에 fresh-demo에 실제 반영 완료.
-- ✅(부분 결정) PK 전략. 전면적인 통일은 하지 않기로 하고 절충안으로 결정: `Member`/`Admin`/`Address`/`RefreshTokenBackup`처럼 이미 UUID(v7)로 돼 있고 외부에 식별자로 노출되는 엔티티는 그대로 UUID 유지. 반면 `member_grade`처럼 새로 추가하는, 외부에 노출 안 되고 내부 FK/조회용으로만 쓰는 작은 참조 테이블은 fm-backend 컨벤션대로 Long(AUTO_INCREMENT) PK로 만들기로 함(`LongMutableBaseEntity`). 목표 DDL의 "내부 PK(BIGINT) + 외부노출용 public_id(BINARY(16)) 분리" 자체를 Member/Admin에 도입할지는 여전히 미정 — 정식 스키마 전환 시 재검토.
-- ✅ `member_grade` 테이블 — 엔티티(`MemberGrade`)+레포지토리 구현 완료(name/discountRate/promotionRule/isDefault). 단, `Member`와의 연관관계(memberGradeId FK)는 아직 안 걸었다 — 신규 가입 시 기본 등급을 어떻게 자동 배정할지까지 같이 설계해야 해서 이번 스코프에서는 뺌(10번 항목 참고).
-- ⬜ `nickname` vs `name` 필드 역할 구분 — 목표 DDL엔 카카오 제공 `nickname`과 폼 입력 `name`이 별도 필드로 존재하는 뉘앙스가 있었는데, fresh-demo는 단일 `nickname`(폼 수집)으로 단순화. 완전히 정리된 결론은 아님.
+- ✅(최종 결정) PK 전략. 처음엔 `Member`/`Admin`/`Address`/`RefreshTokenBackup`은 UUID(v7) 유지, `member_grade`처럼 새로 추가하는 내부 전용 참조 테이블만 Long PK로 쓰는 절충안이었으나, 이후 전면적으로 Long(AUTO_INCREMENT) PK로 통일하기로 결정하고 전체 코드베이스를 마이그레이션했다. `UuidBaseEntity`/`ImmutableBaseEntity`/`MutableBaseEntity`는 삭제하고 `LongMutableBaseEntity` 하나로 합쳤으며, 모든 엔티티/리포지토리/JWT sub/URL 경로/DTO가 이제 Long id를 쓴다. 목표 DDL의 "내부 PK(BIGINT) + 외부노출용 public_id(BINARY(16)) 분리" 구조는 도입하지 않기로 했다 — Long id를 그대로 JWT sub/URL/응답 body에 노출한다. 순차 증가값이라 enumeration(계정 수 추측 등) 리스크가 있음을 인지하고도, 지금 프로젝트 규모에서는 단순함을 우선한 의도적 트레이드오프다(`LongMutableBaseEntity` Javadoc 참고). 나중에 필요해지면 이 Long PK는 내부용으로만 남기고 별도 public_id를 추가하는 방향으로 갈 수 있다.
+- ✅ `member_grade` 테이블 — 엔티티(`MemberGrade`)+레포지토리 구현 완료(name/promotionRule/isDefault). `discountRate`는 원래 있었는데, 목표 DDL엔 없고(등급 혜택은 아직 미정) 아무도 안 읽는 값이라 DDL에 맞춰 제거했다. `Member.memberGradeId`로 NOT NULL FK도 연결 완료 — 신규 회원은 `isDefault=true`인 등급을 자동 배정받는다(`CustomOidcUserService` 참고). 이 등급이 하나도 없으면 가입 자체가 막히므로, `DefaultMemberGradeInitializer`(기동 시 1회 확인 후 없으면 시드)를 추가해뒀다.
+- ✅ `nickname` vs `name` 필드 역할 구분 — 목표 DDL대로 분리했다. `nickname`(카카오 제공 별칭)과 `name`(폼 입력 실명)은 서로 다른 필드이고, `name`은 닉네임과 함께 온보딩 필수 항목이다(`MemberOnboardingRequest`).
 - ✅ `is_marketing_agreed` — `Member.marketingAgreed`로 구현. 필수 약관동의(`termsAgreedAt`)와 달리 선택 항목이라 `MemberOnboardingRequest`에 검증 없이 추가, 온보딩 API(`PATCH /members/me/onboarding`)에서 같이 받음.
-- ⬜ `BLOCKED` 상태 — 의도적으로 보류(현재 `MemberStatus`는 PENDING_PROFILE/ACTIVE/WITHDRAWN만 존재). 언제/누가(관리자 수동? 자동 정책?) BLOCKED로 전환하는지 플로우 자체가 아직 없어서, 상태값만 먼저 추가하는 건 의미가 없다고 보고 미룸.
+- ✅(값만) `BLOCKED` 상태 — `MemberStatus`에 값은 추가했다. 다만 "누가/언제/어떤 기준으로 BLOCKED로 전환하는지" 플로우는 여전히 없다 — 이 값을 세팅하는 코드는 아직 어디에도 없고, 목표 DDL이 이 값을 기대하고 있다는 사실만 먼저 반영한 상태다(10번 항목 참고).
 
 **단순화된 ERD 초안**(cart/member_grade/member/address, PK만)
 - ⬜ 팀플 발표용 초안이라 fresh-demo에 반영 안 함. 비교 중 발견된 불일치만 기록: email/nickname NOT NULL 여부 충돌, 정체불명의 `password_hash` 컬럼(카카오 전용인데 왜 있는지 불명확), 약관동의 필드 누락, `DEFAULT BOOLEAN` 오타.
@@ -99,13 +99,13 @@
 ## 10. 앞으로 더 설계하면 좋을 것들
 
 - Grace period / token family 기반 탈취 탐지 — 지금은 CAS 실패를 전부 "재사용 의심"으로 간주해 무조건 세션을 끊는 단순한 방식. 정상적인 동시 요청까지 로그아웃되는 게 UX상 거슬리면, 직전 토큰을 잠깐 봐주는 grace window나 토큰 계보(family) 기반 탐지로 정교화 — 실서비스 전환 시점에 필요성 재평가.
-- `Member`/`Admin`을 목표 DDL처럼 "내부 PK(BIGINT) + 외부노출용 public_id" 구조로 바꿀지 — 이번엔 `member_grade`(신규 참조 테이블)만 Long PK로 결정했고, 기존 UUID PK 엔티티들은 손대지 않기로 함. 전면 전환은 여전히 미정.
-- `MemberGrade`와 `Member`의 연관관계(memberGradeId FK) 연결 — 테이블만 만들어둔 상태. 신규 가입 시 기본 등급(isDefault) 자동 배정 로직, 등급별 혜택을 실제로 어디서 적용할지(주문 도메인이 없어서 지금은 적용할 곳도 없음)까지 같이 설계해야 함.
-- `BLOCKED` 상태 도입 — 상태값 자체보다 "누가/언제/어떤 기준으로 회원을 차단하는지" 플로우 설계가 먼저 필요.
+- `Member`/`Admin`을 목표 DDL처럼 "내부 PK(BIGINT) + 외부노출용 public_id" 구조로 바꿀지 — PK 자체는 이미 전부 Long으로 통일했고(9번 항목), 지금은 그 Long id를 그대로 외부에 노출하기로 결정한 상태. enumeration 리스크가 실제로 문제 되면 이 시점에 public_id 분리를 재검토.
+- `MemberGrade` 등급별 혜택을 실제로 어디서 적용할지 — FK 연결과 기본 등급 자동배정은 끝났지만(9번 항목), 혜택 자체(할인율 등)는 여전히 미정이고 적용할 도메인(주문)도 없음.
+- `BLOCKED` 상태 도입 — 값은 추가됐지만 "누가/언제/어떤 기준으로 회원을 차단하는지" 플로우 설계가 먼저 필요. 관리자 API, 자동 정책 여부 등.
 - 주문 도메인이 생기면 `Member.withdraw()`의 "진행 중 주문 있으면 탈퇴 차단" TODO 실제 구현.
 - 카카오 unlink 웹훅을 SSF(Shared Signals Framework) 기반 "계정 상태 변경 웹훅"으로 이전 — admin key 헤더 검증보다 더 강한 RS256 서명 검증(JWKS)이 가능.
 - 운영 전환 체크리스트: `JWT_SECRET` 관리 방식(시크릿 매니저 도입 여부) — 지금은 Redis 이중화 대신 `RefreshTokenBackup`(DB write-through+폴백)으로 장애 대비를 해결하기로 결정 완료(1번 항목 참고). (`jwt.cookie.secure`는 `application-local.yaml`/`application-prod.yaml` 프로필 분리로 이미 반영됨 — 배포 시 `SPRING_PROFILES_ACTIVE=prod` 지정 필요.)
-- `Address`의 기본 배송지 강제 로직을 DDL의 generated column 방식으로 옮길지, 지금처럼 서비스 레이어 방식을 유지할지 — Flyway/Liquibase 도입 여부와 맞물린 결정.
+- ✅ `Address`의 기본 배송지 강제 — 서비스 레이어 로직은 유지하면서, 목표 DDL과 같은 generated column(`is_default_key`) + UNIQUE를 추가로 걸어 DB 레벨 안전망을 얹었다. 다만 이 프로젝트는 Flyway가 없어(ddl-auto:update) 기존 테이블에 생성 컬럼을 추가하는 ALTER가 실제로 깨끗하게 먹히는지는 로컬에서 검증이 필요하다 — 안 먹으면 테이블을 드롭하고 재기동하거나 수동 ALTER TABLE이 필요하다(`Address` Javadoc 참고).
 - `RefreshTokenBackup` 테이블도 실서비스 규모에서는 row 수가 활성 사용자 수만큼 쌓이는데, 지금은 매시 정각 배치 하나로만 정리 — 트래픽이 커지면 배치 주기/인덱스 전략 재검토.
 - 관리자 액션 감사 로그를 지금의 콘솔/JSON 로그 라인 수준이 아니라 별도 감사 테이블(누가 조회해도 위변조 어려운 append-only 저장소)로 옮길지 — 지금은 `logback-spring.xml`이 찍는 로그가 사실상 유일한 기록.
 - `AccessTokenValidAfterRepository`의 fail-open 정책 재검토 — 지금은 Redis 장애 시 이 방어선을 그냥 건너뛰는데, 실서비스 규모에서 Redis 가용성이 충분히 보장되면(다중화 등) fail-closed로 바꾸는 게 나을 수도 있음. 비밀번호 변경/회원 차단 기능이 생기면 그 시점에도 `invalidateBefore()`를 호출하는 코드를 추가해야 함(지금은 훅만 없고 호출부는 없음).

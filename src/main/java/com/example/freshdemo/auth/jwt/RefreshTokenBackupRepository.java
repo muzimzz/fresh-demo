@@ -2,18 +2,17 @@ package com.example.freshdemo.auth.jwt;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
-import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
 @Repository
-public interface RefreshTokenBackupRepository extends JpaRepository<RefreshTokenBackup, UUID> {
+public interface RefreshTokenBackupRepository extends JpaRepository<RefreshTokenBackup, Long> {
 
-    Optional<RefreshTokenBackup> findByRoleAndOwnerId(String role, UUID ownerId);
+    Optional<RefreshTokenBackup> findByRoleAndOwnerId(String role, Long ownerId);
 
-    void deleteByRoleAndOwnerId(String role, UUID ownerId);
+    void deleteByRoleAndOwnerId(String role, Long ownerId);
 
     /**
      * Redis의 Lua CAS와 같은 역할을 DB만으로 흉내낸다 — WHERE 절에 옛 토큰 값을 같이 걸어서,
@@ -25,7 +24,7 @@ public interface RefreshTokenBackupRepository extends JpaRepository<RefreshToken
     @Modifying
     @Query("update RefreshTokenBackup r set r.tokenHash = :newTokenHash, r.expiresAt = :expiresAt " +
             "where r.role = :role and r.ownerId = :ownerId and r.tokenHash = :oldTokenHash")
-    int compareAndSet(String role, UUID ownerId, String oldTokenHash, String newTokenHash, LocalDateTime expiresAt);
+    int compareAndSet(String role, Long ownerId, String oldTokenHash, String newTokenHash, LocalDateTime expiresAt);
 
     @Modifying
     @Query("delete from RefreshTokenBackup r where r.expiresAt < :now")

@@ -5,7 +5,6 @@ import com.example.freshdemo.common.exception.ErrorCode;
 import com.example.freshdemo.member.domain.Member;
 import com.example.freshdemo.member.repository.MemberRepository;
 import java.time.LocalDateTime;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,7 +23,7 @@ public class MemberOnboardingService {
     private final MemberRepository memberRepository;
 
     @Transactional
-    public Member completeOnboarding(UUID memberId, String nickname, boolean marketingAgreed) {
+    public Member completeOnboarding(Long memberId, String name, String nickname, boolean marketingAgreed) {
         Member member = memberRepository.findById(memberId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.MEMBER_NOT_FOUND));
 
@@ -37,6 +36,6 @@ public class MemberOnboardingService {
             throw new BusinessException(ErrorCode.DUPLICATE_NICKNAME);
         }
 
-        return member.completeOnboarding(nickname, LocalDateTime.now(), marketingAgreed);
+        return member.completeOnboarding(name, nickname, LocalDateTime.now(), marketingAgreed);
     }
 }

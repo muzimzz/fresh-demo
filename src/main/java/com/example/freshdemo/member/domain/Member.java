@@ -1,6 +1,6 @@
 package com.example.freshdemo.member.domain;
 
-import com.example.freshdemo.common.jpa.MutableBaseEntity;
+import com.example.freshdemo.common.jpa.LongMutableBaseEntity;
 import com.example.freshdemo.common.logging.PiiMasker;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -8,6 +8,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
+import java.util.Objects;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
@@ -17,7 +18,7 @@ import lombok.NoArgsConstructor;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Table(name = "member")
-public class Member extends MutableBaseEntity {
+public class Member extends LongMutableBaseEntity {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "social_type", nullable = false, length = 20)
@@ -40,6 +41,19 @@ public class Member extends MutableBaseEntity {
 
     @Column(unique = true, length = 20)
     private String nickname;
+
+    // 목표 DDL의 member.name(폼 입력 실명) — 카카오가 주는 nickname과는 별개 필드다. nickname은
+    // 카카오 프로필 별칭(선택적으로 겹칠 수 있는 값)이고, name은 사용자가 온보딩에서 직접 입력하는
+    // 실명이라 서로 대체할 수 없다는 판단으로 DDL을 그대로 따라 분리했다. 온보딩 필수 항목이라
+    // PENDING_PROFILE에서는 null, completeOnboarding() 이후엔 항상 값이 있다.
+    @Column(length = 50)
+    private String name;
+
+    // MemberGrade FK. @ManyToOne 대신 raw id를 든다 — Address.memberId 등과 같은 이유(지연 로딩/N+1
+    // 회피). 신규 회원은 항상 MemberGrade.isDefault=true인 행이 자동 배정된다(CustomOidcUserService
+    // 참고) — 그래서 NOT NULL이고, 등급을 바꾸는 기능은 아직 없다(고정 배정만 있음).
+    @Column(name = "member_grade_id", nullable = false)
+    private Long memberGradeId;
 
     // 약관 동의 시각. null이면 미동의 — boolean 대신 시각을 남겨서 "언제 동의했는지" 감사 추적이 되게 했다.
     @Column(name = "terms_agreed_at")
@@ -71,16 +85,21 @@ public class Member extends MutableBaseEntity {
     @Column(nullable = false)
     private MemberStatus status;
 
-    @Column(name = "withdrawn_at")
-    private LocalDateTime withdrawnAt;
+    // 목표 DDL의 member.deleted_at과 이름을 맞췄다(기존 withdrawnAt에서 리네임) — DDL은 이 컬럼과
+    // status='WITHDRAWN'의 짝을 CHECK 제약으로 강제하는데, 여기서는 그 짝 맞추기를 withdraw()
+    // 메서드 하나로만 하고 있다(DB CHECK로 강제하지는 않음 — 이 프로젝트는 Flyway 마이그레이션이
+    // 없어 CHECK 제약을 코드만으로 안전하게 걸기 어렵다).
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
 
     @Builder
-    private Member(SocialType socialType, String socialTypeId, String email, MemberRole role) {
+    private Member(SocialType socialType, String socialTypeId, String email, MemberRole role, Long memberGradeId) {
         this.socialType = socialType;
         this.socialTypeId = socialTypeId;
         this.activeProviderKey = buildActiveProviderKey(socialType, socialTypeId);
         this.email = email;
         this.role = (role != null) ? role : MemberRole.ROLE_USER;
+        this.memberGradeId = Objects.requireNonNull(memberGradeId, "memberGradeId");
         // 카카오 최초 로그인 시 이메일 정도만 갖고 바로 만들어지는 회원이라, 필수 온보딩 정보
         // (닉네임/약관동의)를 받기 전까지는 PENDING_PROFILE로 시작한다 — completeOnboarding()
         // 호출 전까지는 미완성 상태.
@@ -105,14 +124,15 @@ public class Member extends MutableBaseEntity {
     }
 
     /**
-     * 가입 직후 PENDING_PROFILE 상태에서 필수 온보딩 정보(닉네임 + 약관동의)를 채워 ACTIVE로 넘긴다.
-     * phone/address는 선택 항목이라 여기서 안 받는다(첫 배송 시점에 별도로 받기로 함).
+     * 가입 직후 PENDING_PROFILE 상태에서 필수 온보딩 정보(이름 + 닉네임 + 약관동의)를 채워 ACTIVE로
+     * 넘긴다. phone/address는 선택 항목이라 여기서 안 받는다(첫 배송 시점에 별도로 받기로 함).
      *
-     * 이미 ACTIVE인 회원이 다시 호출해도(닉네임 변경) 에러 없이 값만 갱신한다 — 상태 전이는
+     * 이미 ACTIVE인 회원이 다시 호출해도(정보 변경) 에러 없이 값만 갱신한다 — 상태 전이는
      * PENDING_PROFILE일 때만 일어난다. 약관 동의 자체를 거부하는 경로는 이 메서드에 안 들어온다
      * (요청 DTO의 @AssertTrue가 컨트롤러 진입 전에 이미 막음 — MemberOnboardingRequest 참고).
      */
-    public Member completeOnboarding(String nickname, LocalDateTime termsAgreedAt, boolean marketingAgreed) {
+    public Member completeOnboarding(String name, String nickname, LocalDateTime termsAgreedAt, boolean marketingAgreed) {
+        this.name = name;
         assignNickname(nickname);
         this.termsAgreedAt = termsAgreedAt;
         this.marketingAgreed = marketingAgreed;
@@ -143,11 +163,10 @@ public class Member extends MutableBaseEntity {
             return;
         }
         this.status = MemberStatus.WITHDRAWN;
-        this.withdrawnAt = LocalDateTime.now();
+        this.deletedAt = LocalDateTime.now();
         // 같은 소셜 계정으로 재가입할 수 있게 활성 키를 비워준다. social_type/social_type_id
         // 자체는 탈퇴 이력 조회를 위해 그대로 남겨두되, 이후 재가입은 이 행을 재활성화하는 게 아니라
-        // 새 행을 만드는 방식으로 처리한다(CustomOidcUserService 참고) — 그래서 reactivate()는
-        // 더 이상 필요 없어 제거했다.
+        // 새 행을 만드는 방식으로 처리한다(CustomOidcUserService 참고.
         this.activeProviderKey = null;
     }
 

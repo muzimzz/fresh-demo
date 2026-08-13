@@ -10,7 +10,6 @@ import com.example.freshdemo.member.domain.SocialType;
 import com.example.freshdemo.member.repository.MemberRepository;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -37,7 +36,7 @@ public class MemberWithdrawalService {
     private final ApplicationEventPublisher eventPublisher;
 
     @Transactional
-    public void withdraw(UUID memberId) {
+    public void withdraw(Long memberId) {
         Member member = memberRepository.findById(memberId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.MEMBER_NOT_FOUND));
 

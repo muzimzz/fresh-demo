@@ -6,7 +6,6 @@ import com.example.freshdemo.address.repository.AddressRepository;
 import com.example.freshdemo.common.exception.BusinessException;
 import com.example.freshdemo.common.exception.ErrorCode;
 import java.util.List;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,12 +17,12 @@ public class AddressService {
     private final AddressRepository addressRepository;
 
     @Transactional(readOnly = true)
-    public List<Address> findMyAddresses(UUID memberId) {
+    public List<Address> findMyAddresses(Long memberId) {
         return addressRepository.findByMemberIdOrderByCreatedAtDesc(memberId);
     }
 
     @Transactional
-    public Address create(UUID memberId, AddressRequest request) {
+    public Address create(Long memberId, AddressRequest request) {
         // 첫 배송지는 무조건 기본으로 — 사용자가 매번 기본 여부를 신경 쓰지 않아도 되게.
         boolean isFirstAddress = addressRepository.countByMemberId(memberId) == 0;
         boolean shouldBeDefault = isFirstAddress || request.isDefault();
@@ -46,7 +45,7 @@ public class AddressService {
     }
 
     @Transactional
-    public Address update(UUID memberId, UUID addressId, AddressRequest request) {
+    public Address update(Long memberId, Long addressId, AddressRequest request) {
         Address address = getOwned(memberId, addressId);
 
         address.update(request.recipient(), request.phone(), request.zipcode(),
@@ -61,7 +60,7 @@ public class AddressService {
     }
 
     @Transactional
-    public void delete(UUID memberId, UUID addressId) {
+    public void delete(Long memberId, Long addressId) {
         Address address = getOwned(memberId, addressId);
         boolean wasDefault = address.isDefault();
 
@@ -76,7 +75,7 @@ public class AddressService {
         }
     }
 
-    private Address getOwned(UUID memberId, UUID addressId) {
+    private Address getOwned(Long memberId, Long addressId) {
         return addressRepository.findByIdAndMemberId(addressId, memberId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ADDRESS_NOT_FOUND));
     }

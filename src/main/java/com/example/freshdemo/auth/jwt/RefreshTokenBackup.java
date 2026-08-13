@@ -1,12 +1,11 @@
 package com.example.freshdemo.auth.jwt;
 
-import com.example.freshdemo.common.jpa.MutableBaseEntity;
+import com.example.freshdemo.common.jpa.LongMutableBaseEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.time.LocalDateTime;
-import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
@@ -34,23 +33,23 @@ import lombok.NoArgsConstructor;
         uniqueConstraints = @UniqueConstraint(columnNames = {"role", "owner_id"})
 )
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class RefreshTokenBackup extends MutableBaseEntity {
+public class RefreshTokenBackup extends LongMutableBaseEntity {
 
     @Column(nullable = false, length = 50)
     private String role;
 
     @Column(name = "owner_id", nullable = false)
-    private UUID ownerId;
+    private Long ownerId;
 
     // SHA-256 해시는 항상 64자(hex) 고정 길이.
     @Column(name = "token_hash", nullable = false, length = 64)
     private String tokenHash;
 
-    @Column(name = "expires_at", nullable = false)
+    @Column(name = "ex  pires_at", nullable = false)
     private LocalDateTime expiresAt;
 
     @Builder
-    private RefreshTokenBackup(String role, UUID ownerId, String tokenHash, LocalDateTime expiresAt) {
+    private RefreshTokenBackup(String role, Long ownerId, String tokenHash, LocalDateTime expiresAt) {
         this.role = role;
         this.ownerId = ownerId;
         this.tokenHash = tokenHash;
