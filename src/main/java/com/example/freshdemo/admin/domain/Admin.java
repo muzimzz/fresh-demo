@@ -7,6 +7,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
+import java.time.LocalDateTime;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
@@ -39,6 +40,17 @@ public class Admin extends LongMutableBaseEntity {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private AdminRole role;
+
+    // 목표 DDL의 admin 테이블엔 이 두 컬럼이 없다 — DDL 작성자가 관리자 세션의 Redis 장애 대비까지는
+    // 고려하지 않은 것으로 보인다. 그래도 관리자도 회원과 동일하게 refreshToken을 발급받고
+    // RefreshTokenRepository를 공유해서 쓰므로(회원/관리자 로그인 로직이 본질적으로 같다는 판단,
+    // AuthController 참고), DB 백업이 회원만 있고 관리자만 없으면 비대칭이 생긴다 — Member와
+    // 대칭으로 여기도 추가했다(Member.refreshTokenHash 주석 참고).
+    @Column(name = "refresh_token_hash", length = 64)
+    private String refreshTokenHash;
+
+    @Column(name = "refresh_token_expires_at")
+    private LocalDateTime refreshTokenExpiresAt;
 
     @Builder
     private Admin(String loginId, String passwordHash, String name, AdminRole role) {

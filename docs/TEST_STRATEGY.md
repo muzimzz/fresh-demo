@@ -21,7 +21,7 @@
 | Mock 경계 맹점 (DB가 강제하는 불변식) | **그대로 채택 — 실제로 레이스 컨디션 3개를 찾음.** 4번 섹션 참고. |
 | 구조적으로 안 보이는 결함(동시성/크로스플로우/미요구사항) | **그대로 채택.** 5번 섹션에 체크리스트로 분리(테스트가 아니라). |
 | 능력 도달 범위(권한 하나로 뭘 할 수 있나) | **그대로 채택 — 2번 섹션의 발견의 근거가 된 질문.** |
-| 트랜잭션 컨텍스트 정직성(OSIV lazy-loading 함정) | **현재는 구조적으로 해당 없음.** `open-in-view: false`인데, 이 프로젝트의 모든 엔티티가 `@ManyToOne`/`@OneToMany` 연관관계를 아예 안 씀(Address/RefreshTokenBackup 모두 FK를 Long 필드로만 들고 있음) — 지연 로딩 자체가 없어서 이 함정이 원천적으로 발생 안 한다. `MemberGrade`↔`Member` 연관관계를 나중에 실제로 걸면(DESIGN_NOTES 10번) 그때 다시 챙겨야 한다. |
+| 트랜잭션 컨텍스트 정직성(OSIV lazy-loading 함정) | **현재는 구조적으로 해당 없음.** `open-in-view: false`인데, 이 프로젝트의 모든 엔티티가 `@ManyToOne`/`@OneToMany` 연관관계를 아예 안 씀(Address 등 모두 FK를 Long 필드로만 들고 있음) — 지연 로딩 자체가 없어서 이 함정이 원천적으로 발생 안 한다. `MemberGrade`↔`Member` 연관관계를 나중에 실제로 걸면(DESIGN_NOTES 10번) 그때 다시 챙겨야 한다. |
 | 다차원 검증기(스킴/호스트/포트 등) | **해당 없음.** 이런 성격의 검증기 자체가 코드베이스에 없음. |
 | 뮤테이션 저항성 | **원칙만 수동으로 채택, 도구는 안 씀.** PIT 같은 뮤테이션 테스트 도구 도입은 이 프로젝트 규모에 비해 과함 — 대신 6번 섹션에서 핵심 테스트 몇 개를 골라 "이 테스트가 진짜 뭘 잡아내는지"를 손으로 검토했다. |
 | 약화된 테스트 탐지 / 불안정성(flaky) 탐지 | **아직 해당 없음.** 기존 테스트가 없으니 "약화"될 대상이 없다. 테스트 스위트가 생긴 뒤, PR마다 이 체크리스트로 diff를 감사하는 용도로는 그대로 유용할 것 — 그때 `test-quality-reviewer`를 실제로 호출하면 됨. |
@@ -115,20 +115,23 @@ PK 타입과 무관하게 동일하다.)
 - [정상] 같은 입력 → 같은 해시
 - [경계] 다른 입력 → 다른 해시 (원문 노출 없이 검증)
 
-### 3.4 RefreshTokenRepository — **[2순위·통합]** (실제/테스트 Redis + DB)
-- [정상] `save` 후 Redis엔 해시만 저장(원문 없음)
-- [정상] `matches`: 원문의 해시 일치 여부 판단
-- [정상] `compareAndSave`: old값 일치 시 교체 성공
+### 3.4 RefreshTokenRepository — **[2순위·통합]** (실제/테스트 Redis + DB, `TokenType.MEMBER`/`ADMIN` 각각)
+- [정상] `save` 후 Redis엔 해시만 저장(원문 없음), DB 백업(`member`/`admin`의 `refresh_token_hash`)도 같은 해시로 반영
+- [정상] `compareAndSave`: old값 일치 시 교체 성공, 성공 시에만 DB 백업도 새 해시로 갱신
 - [상태] `compareAndSave`: 이미 교체된 경우 실패(재사용 의심 시나리오 — CAS 실패)
-- [에러] Redis 강제 장애 시 `save`/`matches`/`compareAndSave` 전부 DB CAS·백업으로 폴백
+- [에러] Redis 강제 장애 시 `save`/`compareAndSave` 전부 DB(`updateRefreshToken`/`compareAndSetRefreshToken`)로 폴백
 - [에러] Redis도 DB도 둘 다 실패 — 지금 코드는 예외를 삼키고 로그만 남기는데(`trySaveBackup`), `compareAndSave`의 DB CAS 실패는 삼키지 않고 그대로 `false` 반환 — 이 비대칭이 의도한 것인지 확인하는 테스트
-- [정상] `delete`: Redis·DB 백업 둘 다 삭제
+- [정상] `delete`: Redis·DB 백업(`clearRefreshToken`) 둘 다 삭제
+- [정상] `TokenType.MEMBER`/`TokenType.ADMIN` 각각 올바른 리포지토리(`MemberRepository`/`AdminRepository`)로 라우팅되는지 — 잘못된 타입으로 엉뚱한 테이블이 갱신되면 안 됨
 
-### 3.5 RefreshTokenBackupRepository / RefreshTokenCleanupScheduler — **[2순위·통합]** (`@DataJpaTest`)
-- [정상] `compareAndSet`: oldHash 일치 시 1건 업데이트
-- [에러] oldHash 불일치 시 0건 업데이트(예외 아님 — row count로만 판단)
-- [경계] `deleteAllExpiredBefore`: `expiresAt`이 지금과 정확히 같은 row는 삭제 대상인지(`<` 조건이라 안 지워짐 — 의도 확인용 경계 테스트)
-- [정상] 스케줄러 실행 후 삭제 건수 0이면 로그 안 남고, 1건 이상이면 `REFRESH_TOKEN_BACKUP_CLEANUP` 로그
+### 3.5 MemberRepository / AdminRepository — refreshToken 백업 메서드 — **[2순위·통합]** (`@DataJpaTest`)
+목표 DDL대로 별도 `refresh_token_backup` 테이블 대신 `member`/`admin`의 `refresh_token_hash`/`refresh_token_expires_at` 컬럼을 직접 갱신하는 벌크 `@Modifying @Query` 3종(`updateRefreshToken`/`clearRefreshToken`/`compareAndSetRefreshToken`) — 예전에 있던 `RefreshTokenBackupRepository`/`RefreshTokenCleanupScheduler`(별도 테이블 + 만료 정리 배치)는 이 컬럼 이전으로 완전히 대체되어 삭제됨(정리할 별도 row 자체가 없어짐).
+- [정상] `updateRefreshToken`: 대상 id의 hash/expiresAt 갱신, 영향 row 수 반환
+- [경계] `updateRefreshToken`: 존재하지 않는 id → 영향 row 0건(예외 아님)
+- [정상] `clearRefreshToken`: hash/expiresAt을 둘 다 null로
+- [정상] `compareAndSetRefreshToken`: oldHash 일치 시 1건 업데이트
+- [에러] `compareAndSetRefreshToken`: oldHash 불일치 시 0건 업데이트(예외 아님 — row count로만 판단)
+- **[신규 발견 — 확인 필요]** `ddl-auto: update`가 기존 `member`/`admin` 테이블에 새 컬럼(`refresh_token_hash`/`refresh_token_expires_at`)을 실제로 깨끗하게 추가해주는지 로컬 검증 필요 — 안 먹으면 테이블 드롭 후 재기동 또는 수동 `ALTER TABLE` 필요(`Member`/`Admin` 엔티티 주석 참고)
 
 ### 3.6 JwtAuthenticationFilter — **[1순위·단위]** (의존성 mock + `MockHttpServletRequest/Response`)
 - [정상] 정상 토큰 → `SecurityContext`에 인증 세팅
@@ -230,8 +233,8 @@ PK 타입과 무관하게 동일하다.)
 - [경계] `referrer_type` 파라미터 없음(옵션) → 로그에 null로 남되 처리 자체는 진행
 - [정상/에러] `KakaoUnlinkClient`/`KakaoLogoutClient`: 성공/4xx(non-fatal)/기타예외 3가지 분기 각각(`MockWebServer` 또는 `WebClient` 자체를 mock)
 
-### 3.19 스케줄러 & 외부 API 공통 로깅 — **[2순위·통합]**
-- [정상] `SchedulerLoggingAspect`: 정상 종료 시 `SCHEDULER_START`/`SCHEDULER_END`(durationMs), 예외 시 `SCHEDULER_FAILED` + 예외 그대로 재던짐
+### 3.19 스케줄러 & 외부 API 공통 로깅 — **[2순위·통합, 현재 스케줄러 없음]**
+- [정상] `SchedulerLoggingAspect`: 정상 종료 시 `SCHEDULER_START`/`SCHEDULER_END`(durationMs), 예외 시 `SCHEDULER_FAILED` + 예외 그대로 재던짐 — **테스트하려면 `@Scheduled` 더미 빈을 하나 만들어야 함**, 지금은 프로젝트에 `@Scheduled` 메서드가 하나도 없다(`RefreshTokenCleanupScheduler` 삭제 이후). 이 Aspect 자체는 향후 대비로 유지 중이라 테스트 우선순위는 낮음.
 - [정상] `ExternalApiLoggingExchangeFilter`: 성공/실패 각각 `EXTERNAL_API_CALL`/`EXTERNAL_API_CALL_FAILED`에 method/url/status/durationMs
 
 ---
@@ -247,7 +250,7 @@ DB(MySQL)와 Redis는 우리가 소유하고 통제하는 "관리 의존성"이�
 | `admin.login_id` UNIQUE | DB 제약 | `existsByLoginId()` 선조회 후 `save()` | **가능** — 두 요청이 동시에 같은 loginId로 발급 시도하면 둘 다 `existsByLoginId()`에서 false를 볼 수 있음 | 실제 DB에 동시 insert 시도(또는 최소한 제약 위반 시 `DataIntegrityViolationException`이 나는지) 확인하는 테스트. 지금 이 예외를 잡는 코드가 `AdminService`에 없어서, 레이스가 실제로 발생하면 500으로 새어나갈 것 — 이것도 같이 확인 |
 | `member.nickname` UNIQUE | DB 제약 | `existsByNickname()` 선조회 후 저장 | **가능** — 동일 패턴 | 위와 동일 |
 | `member.active_provider_key` UNIQUE | DB 제약 | `saveAndFlush()` 시도 → `DataIntegrityViolationException` 캐치 → 재조회 | **이미 올바르게 처리됨** — DB 제약을 신뢰하고 실패를 캐치하는 정석 패턴 | 이 패턴이 계속 유지되는지 회귀 테스트만 있으면 됨(이미 3.9에 포함) |
-| `refresh_token_backup (role, owner_id)` UNIQUE | DB 제약 | `findByRoleAndOwnerId()` 후 `rotate()` 또는 `save()` | 이론상 가능하지만 실제로는 `compareAndSave()`의 Redis Lua CAS(또는 DB CAS `compareAndSet`)가 상위에서 이미 동시성을 막고 있어서 이 테이블에 직접 동시 insert가 발생할 상황 자체가 드묾 — 낮은 우선순위 | Redis/DB CAS가 정상 동작하는 한 문제없다는 전제를 문서로 남기고, CAS 테스트(3.4)로 사실상 커버 |
+| `member`/`admin`의 `refresh_token_hash` 동시 갱신 | 별도 DB 제약 없음(각 행 자체의 PK가 이미 유일) | `compareAndSetRefreshToken()`의 `WHERE id = :id AND refresh_token_hash = :oldHash` 조건부 UPDATE | 이론상 가능하지만 실제로는 `compareAndSave()`의 Redis Lua CAS(또는 DB CAS `compareAndSetRefreshToken`)가 상위에서 이미 동시성을 막고 있어서 같은 행에 대한 동시 갱신이 레이스로 깨질 상황 자체가 드묾 — 낮은 우선순위. 별도 테이블(`refresh_token_backup`)일 때 있던 `(role, owner_id)` UNIQUE 제약은 컬럼이 소유 엔티티(`member`/`admin`) 자신의 행으로 옮겨가면서 더 이상 필요 없어졌다(그 행의 PK 자체가 이미 유일성을 보장). | Redis/DB CAS가 정상 동작하는 한 문제없다는 전제를 문서로 남기고, CAS 테스트(3.4)로 사실상 커버 |
 | 배송지 "회원당 기본 1개" | **DB 제약 추가됨**(`address.is_default_key` 생성 컬럼 + UNIQUE, 목표 DDL과 동일 기법) | `isFirstAddress`/`clearDefaultForMember`(1차) + DB UNIQUE(2차 안전망) | 애플리케이션 로직 레이스는 여전히 가능하지만, DB가 최종적으로 2개 이상 존재하는 걸 막아준다 — 레이스가 나면 앱 로직이 아니라 `DataIntegrityViolationException`으로 드러남(지금 `AddressService`는 이 예외를 아직 안 잡음, 500으로 샐 수 있음) | 동시 요청으로 실제 DB에 두 번째 기본 배송지가 들어가려 할 때 `DataIntegrityViolationException`이 나는지, 그리고 그게 지금처럼 500으로 새는 게 맞는지(Admin/Member 유니크 제약처럼 캐치해서 409 등으로 바꿀지) 확인하는 테스트. `ddl-auto:update`가 기존 테이블에 생성 컬럼을 실제로 만들어주는지부터 로컬에서 검증 필요(Address 엔티티 Javadoc 참고) |
 
 ---

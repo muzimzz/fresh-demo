@@ -61,7 +61,7 @@ public class AdminService {
         String accessToken = jwtTokenProvider.createAccessToken(adminId, TokenType.ADMIN, roleAuthority);
         String refreshToken = jwtTokenProvider.createRefreshToken(adminId, TokenType.ADMIN, roleAuthority, true);
 
-        refreshTokenRepository.save(roleAuthority, adminId, refreshToken,
+        refreshTokenRepository.save(TokenType.ADMIN, roleAuthority, adminId, refreshToken,
                 Duration.ofMillis(jwtTokenProvider.getRefreshTokenValidityMs()));
 
         response.addHeader(HttpHeaders.SET_COOKIE, authCookieFactory.accessTokenCookie(accessToken, true).toString());
@@ -113,7 +113,7 @@ public class AdminService {
 
         // 삭제된 관리자가 들고 있던 refreshToken도 같이 지운다 — 안 지우면 계정은 삭제됐는데
         // 만료 전까지 재발급(reissue)만으로 계속 accessToken을 새로 받을 수 있게 된다.
-        refreshTokenRepository.delete(target.getRole().toAuthority(), target.getId());
+        refreshTokenRepository.delete(TokenType.ADMIN, target.getRole().toAuthority(), target.getId());
 
         adminRepository.deleteById(targetAdminId);
 

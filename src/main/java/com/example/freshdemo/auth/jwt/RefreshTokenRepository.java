@@ -1,9 +1,10 @@
 package com.example.freshdemo.auth.jwt;
 
+import com.example.freshdemo.admin.repository.AdminRepository;
+import com.example.freshdemo.member.repository.MemberRepository;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ClassPathResource;
@@ -17,8 +18,15 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Refresh Token 저장소. key = "refreshToken:{role}:{id}".
  *
- * Redis를 1차 저장소(빠른 조회/삭제)로 쓰고, RefreshTokenBackup(MySQL)에 같은 내용을 write-through로
- * 같이 남긴다 — Redis가 죽어도 재발급이 전부 막혀서 전체 유저가 강제 로그아웃되는 걸 막기 위한 백업 계층.
+ * Redis를 1차 저장소(빠른 조회/삭제)로 쓰고, DB 백업은 별도 테이블이 아니라 목표 DDL을 따라
+ * 소유 엔티티(Member/Admin) 행 자체의 refreshTokenHash/refreshTokenExpiresAt 컬럼에 write-through로
+ * 남긴다 — Redis가 죽어도 재발급이 전부 막혀서 전체 유저가 강제 로그아웃되는 걸 막기 위한 백업 계층.
+ *
+ * 예전엔 role+ownerId로 찾는 별도 RefreshTokenBackup 테이블을 썼는데, DDL을 받아들이면서 그 자리를
+ * Member/Admin 테이블 자체로 옮겼다 — 그래서 이 클래스는 이제 (role 문자열, id)만으로는 어느 테이블에
+ * 백업을 써야 할지 알 수 없고, 호출부가 TokenType(MEMBER/ADMIN)을 같이 넘겨줘야 한다. 목표 DDL의
+ * admin 테이블엔 이 두 컬럼이 없지만(회원 세션만 고려한 설계로 보임), 관리자도 이 저장소를 그대로
+ * 공유해서 쓰므로 Admin에도 대칭으로 컬럼을 추가했다(Admin.refreshTokenHash 주석 참고).
  *
  * 폴백 기준: Redis 호출이 "정상적으로 값이 없다"(Optional.empty)가 아니라 "연결 자체가 안 된다"
  * (DataAccessException 계열)일 때만 DB로 넘어간다 — 그냥 키가 없는 것까지 DB를 보러 가면 이미
@@ -30,8 +38,7 @@ import org.springframework.transaction.annotation.Transactional;
  * Redis/DB에 저장하는 값은 refreshToken 원문이 아니라 SHA-256 해시(TokenHasher)다 — 저장소가
  * 유출돼도 그 값을 그대로 제시해서 로그인할 수는 없다. 서버는 원문을 다시 복원할 필요가 없으니(
  * 클라이언트 쿠키에 들어있는 원문과 "일치하는지"만 확인하면 됨) 암호화가 아니라 해싱을 썼다 —
- * 비밀번호와 같은 이유. 그래서 저장된 값을 그대로 돌려주는 find() 같은 메서드는 의미가 없고,
- * matches()처럼 "이 원문의 해시가 저장된 해시와 같은가"를 묻는 형태로만 제공한다.
+ * 비밀번호와 같은 이유.
  */
 @Slf4j
 @Repository
@@ -53,12 +60,13 @@ public class RefreshTokenRepository {
     }
 
     private final StringRedisTemplate redisTemplate;
-    private final RefreshTokenBackupRepository backupRepository;
+    private final MemberRepository memberRepository;
+    private final AdminRepository adminRepository;
 
     @Transactional
-    public void save(String role, Long id, String refreshToken, Duration ttl) {
+    public void save(TokenType type, String role, Long id, String refreshToken, Duration ttl) {
         String tokenHash = TokenHasher.sha256(refreshToken);
-        trySaveBackup(role, id, tokenHash, LocalDateTime.now().plus(ttl));
+        trySaveBackup(type, id, tokenHash, LocalDateTime.now().plus(ttl));
 
         try {
             redisTemplate.opsForValue().set(key(role, id), tokenHash, ttl);
@@ -67,28 +75,10 @@ public class RefreshTokenRepository {
         }
     }
 
-    /**
-     * 들어온 refreshToken(원문)의 해시가 저장된 해시와 같은지 확인한다. 예전엔 저장된 값을 그대로
-     * 돌려주는 find()가 있었는데(호출부가 하나도 없어서 죽은 코드였음), 해싱 방식으로 바꾸면서
-     * "저장된 원문을 돌려주는" 형태 자체가 더 이상 성립하지 않아 이 메서드로 대체했다.
-     */
-    public boolean matches(String role, Long id, String candidateToken) {
-        String candidateHash = TokenHasher.sha256(candidateToken);
-        try {
-            String stored = redisTemplate.opsForValue().get(key(role, id));
-            return candidateHash.equals(stored);
-        } catch (DataAccessException e) {
-            log.warn("event=REDIS_FIND_FAILED role={} id={} — DB 백업으로 폴백", role, id, e);
-            return findHashFromBackup(role, id)
-                    .map(candidateHash::equals)
-                    .orElse(false);
-        }
-    }
-
     @Transactional
-    public void delete(String role, Long id) {
+    public void delete(TokenType type, String role, Long id) {
         try {
-            backupRepository.deleteByRoleAndOwnerId(role, id);
+            clearBackup(type, id);
         } catch (DataAccessException e) {
             log.warn("event=DB_BACKUP_DELETE_FAILED role={} id={} — DB 백업 삭제 실패(로그아웃/삭제 자체는 계속 진행)", role, id, e);
         }
@@ -102,15 +92,15 @@ public class RefreshTokenRepository {
     /**
      * "현재 저장된 값이 oldRefreshToken과 같을 때만 newRefreshToken으로 교체"를 원자적으로 수행한다.
      * Redis가 살아있으면 Lua 스크립트로 처리하고(조회+비교+저장이 Redis 안에서 한 번에 원자적으로
-     * 끝남), Redis 자체가 죽어있으면 DB의 조건부 UPDATE(영향받은 row 수로 성공 여부 판단)로 같은
-     * 보장을 흉내낸다.
+     * 끝남), Redis 자체가 죽어있으면 소유 엔티티(Member/Admin)에 대한 조건부 UPDATE(영향받은 row
+     * 수로 성공 여부 판단)로 같은 보장을 흉내낸다.
      *
      * @return 교체에 성공했으면 true. false면 이미 다른 값으로 바뀐 상태 — 정상적인 동시 요청 race일
      *         수도, 이미 폐기된 옛 토큰의 재사용(탈취 의심)일 수도 있다. 호출부(AuthController)가
      *         구분 없이 재사용으로 간주해 세션을 무효화한다.
      */
     @Transactional
-    public boolean compareAndSave(String role, Long id, String oldRefreshToken, String newRefreshToken, Duration ttl) {
+    public boolean compareAndSave(TokenType type, String role, Long id, String oldRefreshToken, String newRefreshToken, Duration ttl) {
         LocalDateTime expiresAt = LocalDateTime.now().plus(ttl);
         String oldHash = TokenHasher.sha256(oldRefreshToken);
         String newHash = TokenHasher.sha256(newRefreshToken);
@@ -123,12 +113,12 @@ public class RefreshTokenRepository {
             );
             boolean rotated = result != null && result == 1L;
             if (rotated) {
-                trySaveBackup(role, id, newHash, expiresAt);
+                trySaveBackup(type, id, newHash, expiresAt);
             }
             return rotated;
         } catch (DataAccessException e) {
             log.warn("event=REDIS_CAS_FAILED role={} id={} — DB CAS로 폴백", role, id, e);
-            int updated = backupRepository.compareAndSet(role, id, oldHash, newHash, expiresAt);
+            int updated = compareAndSetBackup(type, id, oldHash, newHash, expiresAt);
             return updated > 0;
         }
     }
@@ -142,32 +132,37 @@ public class RefreshTokenRepository {
      * — 대가로 "DB 백업이 살짝 stale하거나 이번 회차는 아예 안 남을 수 있다"는 리스크를 감수한다
      * (Redis 자체가 죽어있는 진짜 장애 상황과 동시에 DB까지 죽는 이중 장애가 아닌 이상 문제되지 않음).
      */
-    private void trySaveBackup(String role, Long id, String tokenHash, LocalDateTime expiresAt) {
+    private void trySaveBackup(TokenType type, Long id, String tokenHash, LocalDateTime expiresAt) {
         try {
-            saveBackup(role, id, tokenHash, expiresAt);
+            int updated = updateBackup(type, id, tokenHash, expiresAt);
+            if (updated == 0) {
+                log.warn("event=DB_BACKUP_SAVE_SKIPPED type={} id={} — 대상 행을 찾지 못함", type, id);
+            }
         } catch (DataAccessException e) {
-            log.warn("event=DB_BACKUP_SAVE_FAILED role={} id={} — Redis만 반영됨(DB 백업 유실 가능, 다음 쓰기 때 다시 시도됨)",
-                    role, id, e);
+            log.warn("event=DB_BACKUP_SAVE_FAILED type={} id={} — Redis만 반영됨(DB 백업 유실 가능, 다음 쓰기 때 다시 시도됨)",
+                    type, id, e);
         }
     }
 
-    private void saveBackup(String role, Long id, String tokenHash, LocalDateTime expiresAt) {
-        backupRepository.findByRoleAndOwnerId(role, id)
-                .ifPresentOrElse(
-                        existing -> existing.rotate(tokenHash, expiresAt),
-                        () -> backupRepository.save(RefreshTokenBackup.builder()
-                                .role(role)
-                                .ownerId(id)
-                                .tokenHash(tokenHash)
-                                .expiresAt(expiresAt)
-                                .build())
-                );
+    private int updateBackup(TokenType type, Long id, String tokenHash, LocalDateTime expiresAt) {
+        return switch (type) {
+            case MEMBER -> memberRepository.updateRefreshToken(id, tokenHash, expiresAt);
+            case ADMIN -> adminRepository.updateRefreshToken(id, tokenHash, expiresAt);
+        };
     }
 
-    private Optional<String> findHashFromBackup(String role, Long id) {
-        return backupRepository.findByRoleAndOwnerId(role, id)
-                .filter(backup -> !backup.isExpired(LocalDateTime.now()))
-                .map(RefreshTokenBackup::getTokenHash);
+    private void clearBackup(TokenType type, Long id) {
+        switch (type) {
+            case MEMBER -> memberRepository.clearRefreshToken(id);
+            case ADMIN -> adminRepository.clearRefreshToken(id);
+        }
+    }
+
+    private int compareAndSetBackup(TokenType type, Long id, String oldHash, String newHash, LocalDateTime expiresAt) {
+        return switch (type) {
+            case MEMBER -> memberRepository.compareAndSetRefreshToken(id, oldHash, newHash, expiresAt);
+            case ADMIN -> adminRepository.compareAndSetRefreshToken(id, oldHash, newHash, expiresAt);
+        };
     }
 
     private String key(String role, Long id) {

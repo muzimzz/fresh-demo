@@ -52,7 +52,7 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
         String accessToken = jwtTokenProvider.createAccessToken(memberId, TokenType.MEMBER, role);
         String refreshToken = jwtTokenProvider.createRefreshToken(memberId, TokenType.MEMBER, role, rememberMe);
 
-        refreshTokenRepository.save(role, memberId, refreshToken, Duration.ofMillis(jwtTokenProvider.getRefreshTokenValidityMs()));
+        refreshTokenRepository.save(TokenType.MEMBER, role, memberId, refreshToken, Duration.ofMillis(jwtTokenProvider.getRefreshTokenValidityMs()));
 
         response.addHeader(HttpHeaders.SET_COOKIE, authCookieFactory.accessTokenCookie(accessToken, rememberMe).toString());
         response.addHeader(HttpHeaders.SET_COOKIE, authCookieFactory.refreshTokenCookie(refreshToken, rememberMe).toString());

@@ -92,6 +92,17 @@ public class Member extends LongMutableBaseEntity {
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
+    // 목표 DDL의 refresh_token_hash/refresh_token_expires_at — Redis가 죽었을 때를 대비한 DB
+    // 백업이다. 원래는 별도 refresh_token_backup 테이블(role+ownerId 키)이 이 역할을 했는데, DDL을
+    // 따라 이 회원 행 자체에 합쳤다. RefreshTokenRepository만 이 두 컬럼을 직접 건드린다(항상 같이
+    // 쓰고 같이 비움 — DDL의 chk_member_refresh_token과 같은 "둘 다 있거나 둘 다 없거나" 불변식을
+    // 코드로만 지킨다). 값은 항상 SHA-256 해시고 원문은 절대 안 남는다(TokenHasher 참고).
+    @Column(name = "refresh_token_hash", length = 64)
+    private String refreshTokenHash;
+
+    @Column(name = "refresh_token_expires_at")
+    private LocalDateTime refreshTokenExpiresAt;
+
     @Builder
     private Member(SocialType socialType, String socialTypeId, String email, MemberRole role, Long memberGradeId) {
         this.socialType = socialType;

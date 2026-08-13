@@ -81,7 +81,7 @@ public class AuthController {
         // "저장된 값이 지금 쿠키로 들어온 옛 토큰과 같을 때만 새 토큰으로 교체"를 원자적으로 수행한다 —
         // 조회와 저장을 분리했을 때 생기는 동시 요청 race(같은 옛 토큰으로 두 재발급 요청이 겹치는 경우)를 없앤다.
         boolean rotated = refreshTokenRepository.compareAndSave(
-                claimedRole, id, refreshToken, newRefreshToken,
+                type, claimedRole, id, refreshToken, newRefreshToken,
                 Duration.ofMillis(jwtTokenProvider.getRefreshTokenValidityMs()));
 
         if (!rotated) {
@@ -94,7 +94,7 @@ public class AuthController {
             // 가능성이 있다는 뜻이라, RT 재발급만 막고 이미 살아있는 AT를 그대로 두면 탈취범이 그
             // AT의 남은 수명(최대 1시간) 동안은 계속 정상 요청을 보낼 수 있다. cutoff=지금 시각으로
             // 등록하면 재로그인해서 새로 받는 토큰(iat가 cutoff 이후)은 영향받지 않는다.
-            refreshTokenRepository.delete(claimedRole, id);
+            refreshTokenRepository.delete(type, claimedRole, id);
             accessTokenValidAfterRepository.invalidateBefore(
                     claimedRole, id, LocalDateTime.now(),
                     Duration.ofMillis(jwtTokenProvider.getAccessTokenValidityMs()));
@@ -117,7 +117,7 @@ public class AuthController {
 
         if (member.isWithdrawn()) {
             // 재발급 시점에 탈퇴 상태면 refreshToken도 같이 지워서 이후 재시도를 막는다
-            refreshTokenRepository.delete(claimedRole, memberId);
+            refreshTokenRepository.delete(TokenType.MEMBER, claimedRole, memberId);
             throw new BusinessException(ErrorCode.UNAUTHORIZED);
         }
 
@@ -134,7 +134,7 @@ public class AuthController {
     @PostMapping("/logout")
     public ResponseEntity<ApiResponse<Void>> logout(@AuthenticationPrincipal CustomUserDetails userDetails, HttpServletResponse response) {
 
-        refreshTokenRepository.delete(userDetails.getRole(), userDetails.getId());
+        refreshTokenRepository.delete(userDetails.getType(), userDetails.getRole(), userDetails.getId());
 
         // 회원일 때만 카카오 쪽도 정리한다 — 관리자는 카카오와 무관(ID/PW 인증)이라 해당 없음.
         // 실패해도 우리 서비스 로그아웃 자체는 이미 끝난 뒤라 응답에 영향 없다(KakaoLogoutClient 내부에서 흡수).

@@ -3,6 +3,7 @@ package com.example.freshdemo.member.service;
 import com.example.freshdemo.auth.jwt.AccessTokenValidAfterRepository;
 import com.example.freshdemo.auth.jwt.JwtTokenProvider;
 import com.example.freshdemo.auth.jwt.RefreshTokenRepository;
+import com.example.freshdemo.auth.jwt.TokenType;
 import com.example.freshdemo.common.exception.BusinessException;
 import com.example.freshdemo.common.exception.ErrorCode;
 import com.example.freshdemo.member.domain.Member;
@@ -17,7 +18,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 회원탈퇴 유스케이스. 우리 쪽에서 능동적으로 탈퇴 버튼을 눌렀을 때(카카오 unlink 웹훅이 아니라)의 진입점.
- *
  * 순서가 중요하다:
  *   1) DB 상태 변경(WITHDRAWN) — 이 트랜잭션이 실패하면 아래 아무것도 실행 안 됨
  *   2) refreshToken 삭제 — 재발급을 막음
@@ -52,7 +52,7 @@ public class MemberWithdrawalService {
         member.withdraw();
 
         String role = member.getRole().name();
-        refreshTokenRepository.delete(role, memberId);
+        refreshTokenRepository.delete(TokenType.MEMBER, role, memberId);
         accessTokenValidAfterRepository.invalidateBefore(
                 role, memberId, LocalDateTime.now(), Duration.ofMillis(jwtTokenProvider.getAccessTokenValidityMs()));
 
@@ -73,7 +73,7 @@ public class MemberWithdrawalService {
                 .ifPresent(member -> {
                     member.withdraw();
                     String role = member.getRole().name();
-                    refreshTokenRepository.delete(role, member.getId());
+                    refreshTokenRepository.delete(TokenType.MEMBER, role, member.getId());
                     accessTokenValidAfterRepository.invalidateBefore(
                             role, member.getId(), LocalDateTime.now(),
                             Duration.ofMillis(jwtTokenProvider.getAccessTokenValidityMs()));
