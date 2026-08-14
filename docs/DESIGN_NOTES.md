@@ -170,3 +170,83 @@
   grep 기반으로 이전 필드명(`socialType`/`socialTypeId`) 잔존 여부를 전수 확인했지만, 실제 컴파일·
   `ddl-auto:update`가 기존 테이블에 이 변경들(특히 GENERATED 컬럼·CHECK 제약)을 깨끗하게 반영하는지는
   로컬에서 별도 검증이 필요하다.
+
+## 12. LG-fm 컨벤션 리팩토링 — 패키지 구조/생성 패턴/응답 체계
+
+**중요: LG-fm 저장소는 이번 작업에서 전혀 건드리지 않았다.** 목적은 fresh-demo(이 저장소)의 v1
+브랜치 자체를 나중에 LG-fm으로 옮길 때 그대로 가져다 쓸 수 있는 모양으로 미리 맞춰두는 것이다 —
+"이식 코드를 짜서 LG-fm에 저장"이 아니라 "LG-fm 컨벤션을 이 저장소 안에서 미리 실천"하는 방향으로
+진행했다. 패키지명(`com.example.freshdemo`)은 그대로 유지했다 — 실제 이식 시점에 한 번에
+바꾸는 편이 낫다고 판단.
+
+- ✅ **패키지 구조 재배치.** LG-fm의 domain-package-boundary 규칙(도메인 루트는 API 컨트롤러+DTO+
+  예외만, 엔티티/리포지토리/서비스는 `domain.entity`/`domain.repository`/`domain.service` 하위로)을
+  따라 `member`/`admin`/`address`/`membergrade` 4개 도메인 전부 재배치했다. 컨트롤러는 각 도메인의
+  루트 패키지로 옮겼다(예: `member.controller.MemberController` → `member.MemberController`).
+  OAuth 관련 클래스(`CustomOidcUserService`/`OAuth2LoginSuccessHandler`/`OAuth2LoginFailureHandler`/
+  `OAuthAttributes`/`CustomOidcUser`)는 `member.domain.oauth`라는 별도 하위 패키지로 묶었다 — 인증
+  어댑터라 `domain.service`와 성격이 달라서다. LG-fm 빌드 게이트를 그대로 가져온다면 커버리지 측정
+  대상(`*.domain.service.*`)에서 이 패키지가 빠진다는 뜻이라 이식 시점에 재논의 필요.
+- ✅ **Address를 독립 도메인으로 유지/명확화.** 원래도 `@ManyToOne` 없이 `memberId`만 드는 구조라
+  member 하위로 합칠 이유가 없었다 — 이번에 `domain.entity/repository/service` 재배치를 하며 위치를
+  다시 확인만 했다.
+- ✅ **인증 인프라(JWT/Redis)를 `common.auth`로 재배치.** `auth.jwt.*`/`auth.CustomUserDetails`를
+  `common.auth.jwt.*`/`common.auth.CustomUserDetails`로 옮겼고, member/admin 공용이었던
+  `member.controller.AuthController`(재발급/로그아웃)도 `common.auth.AuthController`로 옮겼다.
+  **다만 이 재배치는 구조적 긴장을 남긴다** — `common.auth.jwt.RefreshTokenRepository`와
+  `common.auth.AuthController`가 `member.domain.repository.MemberRepository`/
+  `admin.domain.repository.AdminRepository`를 직접 참조한다. "common은 도메인을 몰라야 한다"는
+  원칙과 부딪히는 지점이라, 실제 LG-fm 이식 시점에 포트-인터페이스로 역전시킬지, `auth`를 `common`이
+  아닌 독립 도메인으로 승격할지 다시 판단해야 한다.
+- ✅ **엔티티 생성 패턴 전환.** `Member`/`Admin`/`Address`/`MemberGrade` 전부 `@Builder`만 붙어있던
+  생성자를 `@Builder(access = AccessLevel.PRIVATE)`로 바꾸고, 이름 있는 정적 팩토리(`register()`)를
+  별도로 뒀다 — 이전엔 생성자가 `private`이어도 Lombok이 기본으로 `public` builder를 만들어줘서
+  `Xxx.builder()...build()`가 외부에 그대로 노출됐고 필수값 누락이 컴파일 타임에 안 걸렸다. `Member`/
+  `Admin` 생성자의 `Objects.requireNonNull` 검증 범위도 넓혔다(전에는 일부 필드만 검증).
+  `OAuthAttributes.toEntity()`/`DefaultMemberGradeInitializer`는 그대로 새 팩토리를 호출하도록
+  갱신했고, `AdminRegisterRequest.toEntity()`/`AddressRequest.toEntity()`는 아예 삭제하고 조립
+  책임을 각각 `AdminService.register()`/`AddressService.create()`로 옮겼다(DTO가 엔티티를 직접
+  조립하지 않는 방향).
+- ✅ **응답 봉투 교체.** `ApiResponse<T>(boolean success, String code, String message, T data, Instant
+  timestamp)`를 삭제하고 `ResponseEnvelope<T>(String code, String message, T data)`로 바꿨다 —
+  success 불리언 없이 `code`가 `"SUCCESS"`인지로 성공을 판별한다(불리언과 code가 어긋나는 응답을
+  구조적으로 막기 위함). 모든 컨트롤러의 반환 타입을 `ResponseEntity<ApiResponse<T>>` →
+  `ResponseEntity<ResponseEnvelope<T>>`로 바꿨다(카카오 웹훅 컨트롤러는 여전히 예외 — 외부 계약이라
+  순수 `ResponseEntity<Void>` 유지).
+- ✅ **에러코드 체계를 도메인별로 분리.** 단일 flat `ErrorCode` enum(`ResponseCode` 인터페이스 구현)을
+  없애고, `ErrorCode` 인터페이스(`getHttpStatus/getCode/getMessage`) + 공통 9개(`CommonErrorCode`,
+  `COMMON-001~009`) + 도메인별 enum(`MemberErrorCode` 5개/`AdminErrorCode` 8개/`AddressErrorCode`
+  1개)으로 나눴다. 기존 `INVALID_PARAMETER`/`NOT_FOUND`/`UNAUTHORIZED`/`FORBIDDEN` 등 도메인
+  무관 코드는 `CommonErrorCode`의 동급 항목으로 흡수했다. `BusinessException`도 `ErrorCode`를 드는
+  추상 클래스로 바뀌었고, 도메인마다 `MemberException`/`AdminException`/`AddressException`이 이를
+  상속해 던진다.
+- ✅ **`GlobalExceptionHandler` 전면 교체.** 기존엔 `ResponseEntityExceptionHandler`를 상속해
+  일부 예외만 오버라이드했는데, `NoResourceFoundException`/`HttpRequestMethodNotSupportedException`/
+  `MaxUploadSizeExceededException`/`HttpMediaTypeNotSupportedException`/`AuthenticationException`/
+  `AccessDeniedException`까지 포함한 plain `@RestControllerAdvice` + 명시적 `@ExceptionHandler`
+  목록으로 바꿨다. `AuthenticationException`/`AccessDeniedException`을 여기서 같이 처리하게 되면서,
+  `SecurityConfig`가 필터 단계 예외를 `HandlerExceptionResolver`로 이 핸들러에 위임하도록 바뀌었고,
+  기존에 직접 JSON을 쓰던 `JwtAuthenticationEntryPoint`/`JwtAccessDeniedHandler`는 중복이 되어
+  삭제했다.
+- ✅ **`AuthController`(재발급/로그아웃)의 예외 판단 변경.** 기존 `BusinessException(ErrorCode.
+  UNAUTHORIZED)` 대신, "인증 자체가 안 된" 상황(리프레시 토큰 무효/재사용 의심)은 도메인 정책
+  위반이 아니라고 보고 `BadCredentialsException`(Spring Security `AuthenticationException` 하위)을
+  던지도록 바꿨다 — `GlobalExceptionHandler`가 이미 `AuthenticationException`을
+  `CommonErrorCode.UNAUTHENTICATED`로 처리하므로 별도 예외 클래스가 필요 없어진다. 이 판단이 맞는지는
+  재검토 대상 — "인증 실패"와 "도메인 예외"의 경계를 어디로 그을지는 참고 문서에도 명시적 답이 없었다.
+- ✅ **Base entity 2단 분리.** `common.jpa.LongMutableBaseEntity`(단일 클래스)를
+  `common.entity.BaseMutableTimeEntity`(id+createdAt+updatedAt, 기존과 필드 동일)와
+  `common.entity.BaseImmutableTimeEntity`(id+createdAt만, 아직 상속하는 엔티티는 없음 — 향후
+  이력/로그성 테이블 대비)로 나눴다.
+- ✅ `PageResponse<T>`(오프셋 방식 목록 응답 공통 포맷)를 미리 추가해뒀다 — 지금 당장 쓰는 목록
+  API는 없지만, 관리자용 목록 조회가 생길 때 바로 쓸 수 있게 컨벤션만 맞춰둠.
+- ⬜ **API 버저닝(`/v1/...`)은 이번 라운드에 반영하지 않았다.** 컨트롤러 경로는 원래 그대로
+  (`/members`, `/admin`, `/addresses`, `/auth`, `/webhook/kakao/unlink`) — 실제 이식 시점에
+  라우팅을 다시 설계할 때 함께 검토.
+- ⬜ **JaCoCo 100%/ArchUnit/SonarQube 게이트는 이번 라운드에 적용하지 않았다.** 새로 재배치된
+  서비스 클래스에 대한 단위 테스트가 없어 그 게이트들을 그대로 가져오면 즉시 실패한다 — 사용자가
+  이번 라운드에서 명시적으로 범위 밖으로 뒀다.
+- 이번 리팩토링도 실제 컴파일 검증은 못 했다(위 §11의 환경 제약과 동일 — JDK 11/네트워크 제한).
+  패키지 재배치 후 남은 참조는 `grep`으로 전수 확인했다(구 패키지 경로, `ApiResponse`/`ResponseCode`
+  잔존, `LongMutableBaseEntity` 상속 잔존 등 전부 클린 확인). 로컬에서 `./gradlew compileJava`를
+  가장 먼저 돌려볼 것.

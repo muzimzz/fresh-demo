@@ -1,8 +1,8 @@
 package com.example.freshdemo.member.dto;
 
-import com.example.freshdemo.member.domain.Member;
-import com.example.freshdemo.member.domain.MemberRole;
-import com.example.freshdemo.member.domain.MemberStatus;
+import com.example.freshdemo.member.domain.entity.Member;
+import com.example.freshdemo.member.domain.entity.MemberRole;
+import com.example.freshdemo.member.domain.entity.MemberStatus;
 import java.time.LocalDateTime;
 
 public record MemberResponse(

@@ -1,16 +1,15 @@
 package com.example.freshdemo.config;
 
-import com.example.freshdemo.auth.jwt.AccessTokenValidAfterRepository;
-import com.example.freshdemo.auth.jwt.JwtAccessDeniedHandler;
-import com.example.freshdemo.auth.jwt.JwtAuthenticationEntryPoint;
-import com.example.freshdemo.auth.jwt.JwtAuthenticationFilter;
-import com.example.freshdemo.auth.jwt.JwtTokenProvider;
-import com.example.freshdemo.auth.jwt.RememberMeRequestFilter;
-import com.example.freshdemo.member.oauth.OAuth2LoginFailureHandler;
-import com.example.freshdemo.member.oauth.OAuth2LoginSuccessHandler;
-import com.example.freshdemo.member.oauth.oidc.CustomOidcUserService;
+import com.example.freshdemo.common.auth.jwt.AccessTokenValidAfterRepository;
+import com.example.freshdemo.common.auth.jwt.JwtAuthenticationFilter;
+import com.example.freshdemo.common.auth.jwt.JwtTokenProvider;
+import com.example.freshdemo.common.auth.jwt.RememberMeRequestFilter;
+import com.example.freshdemo.member.domain.oauth.OAuth2LoginFailureHandler;
+import com.example.freshdemo.member.domain.oauth.OAuth2LoginSuccessHandler;
+import com.example.freshdemo.member.domain.oauth.CustomOidcUserService;
 import jakarta.servlet.DispatcherType;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -22,6 +21,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestRedirectFilter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.servlet.HandlerExceptionResolver;
 
 /**
  * 카카오만 지원하는 버전의 SecurityConfig — 다른 소셜 로그인(naver/google 등) 관련 설정은 없다.
@@ -33,6 +33,13 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  * JwtAuthenticationFilter 하나가 type(MEMBER/ADMIN) 클레임까지 같이 읽어 인증 주체를 만들고,
  * 인가만 아래 requestMatchers에서 role로 나눈다 — 필터체인을 안 쪼갠 게 "설계를 너무 많이 바꾸지
  * 않는다"는 원칙에 더 맞는다고 판단.
+ *
+ * [LG-fm 컨벤션 리팩토링] 기존엔 JwtAuthenticationEntryPoint/JwtAccessDeniedHandler가 필터
+ * 예외를 직접 잡아 ApiResponse JSON을 작성했다. LG-fm 컨벤션은 "오류 응답 구조는
+ * GlobalExceptionHandler가 혼자 소유한다"는 원칙 아래, 필터 단계의 인증/인가 예외를
+ * HandlerExceptionResolver로 다시 MVC 예외 처리(GlobalExceptionHandler)에 위임한다 — 그래서 그
+ * 두 클래스는 삭제하고 이 방식으로 바꿨다(GlobalExceptionHandler의 AuthenticationException/
+ * AccessDeniedException 핸들러가 대신 응답을 만든다).
  */
 @Configuration
 @RequiredArgsConstructor
@@ -43,8 +50,9 @@ public class SecurityConfig {
     private final AccessTokenValidAfterRepository accessTokenValidAfterRepository;
     private final OAuth2LoginSuccessHandler oAuth2LoginSuccessHandler;
     private final OAuth2LoginFailureHandler oAuth2LoginFailureHandler;
-    private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
-    private final JwtAccessDeniedHandler jwtAccessDeniedHandler;
+
+    @Qualifier("handlerExceptionResolver")
+    private final HandlerExceptionResolver handlerExceptionResolver;
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -68,8 +76,10 @@ public class SecurityConfig {
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 
                 .exceptionHandling(exception -> exception
-                        .authenticationEntryPoint(jwtAuthenticationEntryPoint)
-                        .accessDeniedHandler(jwtAccessDeniedHandler)
+                        .authenticationEntryPoint((request, response, authException) ->
+                                handlerExceptionResolver.resolveException(request, response, null, authException))
+                        .accessDeniedHandler((request, response, accessDeniedException) ->
+                                handlerExceptionResolver.resolveException(request, response, null, accessDeniedException))
                 )
 
                 .oauth2Login(oauth2 -> oauth2

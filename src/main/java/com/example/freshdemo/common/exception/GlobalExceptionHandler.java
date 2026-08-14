@@ -1,214 +1,118 @@
 package com.example.freshdemo.common.exception;
 
-import com.example.freshdemo.common.response.ApiResponse;
-import jakarta.servlet.http.HttpServletResponse;
+import com.example.freshdemo.common.response.ResponseEnvelope;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
-import jakarta.validation.Path;
-import java.util.List;
-import java.util.stream.Stream;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
-import org.jspecify.annotations.Nullable;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
-import org.springframework.validation.BindingResult;
-import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.validation.BindException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.web.context.request.ServletWebRequest;
-import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
-import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
-import org.springframework.web.util.WebUtils;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
- * 검증된 예외 처리 정책을 그대로 가져왔다.
- * 로깅 정책(4xx=WARN 스택트레이스 없음, 5xx=ERROR 스택트레이스 포함)은 검증된 부분이라 그대로 유지 권장.
+ * [LG-fm 컨벤션 적용] Controller 경계까지 전파된 예외를 공통 HTTP 응답으로 변환한다. 기존
+ * fresh-demo GlobalExceptionHandler는 ResponseEntityExceptionHandler를 상속해 일부 예외만
+ * 오버라이드했는데, LG-fm은 상속 없이 plain @RestControllerAdvice + 명시적 @ExceptionHandler
+ * 목록으로 훨씬 넓은 예외(NoResourceFoundException/HttpRequestMethodNotSupportedException/
+ * MaxUploadSizeExceededException/HttpMediaTypeNotSupportedException/AuthenticationException/
+ * AccessDeniedException 포함)를 다룬다 — 그 형태를 그대로 옮겨왔다.
+ *
+ * AuthenticationException/AccessDeniedException은 필터 단계(SecurityConfig)에서
+ * HandlerExceptionResolver로 다시 이 핸들러에 위임된 것도 함께 잡는다(SecurityConfig 참고) —
+ * 그래서 기존에 있던 JwtAuthenticationEntryPoint/JwtAccessDeniedHandler(직접 JSON 작성)는
+ * 삭제했다. 응답 문구는 항상 ErrorCode에서만 나온다.
  */
 @Slf4j
 @RestControllerAdvice
-public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
+public class GlobalExceptionHandler {
 
     @ExceptionHandler(BusinessException.class)
-    public ResponseEntity<ApiResponse<Void>> handleBusinessException(BusinessException e) {
-        ResponseCode code = e.getErrorCode();
-        logByStatus(e, code, null);
-
-        return ResponseEntity
-                .status(code.getStatus())
-                .body(ApiResponse.fail(code));
+    public ResponseEntity<ResponseEnvelope<Void>> handleBusiness(BusinessException e) {
+        ErrorCode errorCode = e.getErrorCode();
+        log.warn("business exception. code={}", errorCode.getCode(), e);
+        return toResponse(errorCode);
     }
 
-    @ExceptionHandler(ConstraintViolationException.class)
-    public ResponseEntity<ApiResponse<List<ValidationError>>> handleConstraintViolation(
-            ConstraintViolationException e
-    ) {
-        List<ValidationError> errors = e.getConstraintViolations().stream()
-                .map(v -> ValidationError.of(extractField(v.getPropertyPath()), v.getMessage()))
-                .toList();
-
-        logClientError(e, ErrorCode.INVALID_PARAMETER, errors);
-
-        return ResponseEntity
-                .badRequest()
-                .body(ApiResponse.fail(errors, ErrorCode.INVALID_PARAMETER));
+    @ExceptionHandler(BindException.class)
+    public ResponseEntity<ResponseEnvelope<Void>> handleBind(BindException e) {
+        String fields = e.getFieldErrors().stream()
+                .map(error -> error.getField() + ": " + error.getDefaultMessage())
+                .collect(Collectors.joining(", "));
+        log.warn("invalid body. fields=[{}]", fields);
+        return toResponse(CommonErrorCode.INVALID_INPUT);
     }
 
-    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
-    public ResponseEntity<ApiResponse<List<ValidationError>>> handleTypeMismatch(
-            MethodArgumentTypeMismatchException e
-    ) {
-        ValidationError error = ValidationError.of(e.getName(), "요청 값의 타입이 올바르지 않습니다.");
-        logClientError(e, ErrorCode.INVALID_PARAMETER, "parameter=" + e.getName());
+    @ExceptionHandler({ConstraintViolationException.class, HandlerMethodValidationException.class})
+    public ResponseEntity<ResponseEnvelope<Void>> handleValidation(Exception e) {
+        log.warn("invalid parameter. detail={}", e.getMessage());
+        return toResponse(CommonErrorCode.INVALID_INPUT);
+    }
 
-        return ResponseEntity
-                .badRequest()
-                .body(ApiResponse.fail(List.of(error), ErrorCode.INVALID_PARAMETER));
+    @ExceptionHandler({
+            HttpMessageNotReadableException.class,
+            MethodArgumentTypeMismatchException.class,
+            MissingServletRequestParameterException.class
+    })
+    public ResponseEntity<ResponseEnvelope<Void>> handleMalformedRequest(Exception e) {
+        log.warn("malformed request. detail={}", e.getMessage());
+        return toResponse(CommonErrorCode.MALFORMED_REQUEST);
+    }
+
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<ResponseEnvelope<Void>> handleAuthentication(AuthenticationException e) {
+        log.warn("unauthenticated. detail={}", e.getMessage());
+        return toResponse(CommonErrorCode.UNAUTHENTICATED);
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ResponseEnvelope<Void>> handleAccessDenied(AccessDeniedException e) {
+        log.warn("permission denied. detail={}", e.getMessage());
+        return toResponse(CommonErrorCode.PERMISSION_DENIED);
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ResponseEnvelope<Void>> handleNoResource(NoResourceFoundException e) {
+        log.warn("endpoint not found. path={}", e.getResourcePath());
+        return toResponse(CommonErrorCode.ENDPOINT_NOT_FOUND);
+    }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ResponseEnvelope<Void>> handleMethodNotAllowed(HttpRequestMethodNotSupportedException e) {
+        log.warn("method not allowed. method={}", e.getMethod());
+        return toResponse(CommonErrorCode.METHOD_NOT_ALLOWED);
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ResponseEnvelope<Void>> handleContentTooLarge(MaxUploadSizeExceededException e) {
+        log.warn("content too large. maxBytes={}", e.getMaxUploadSize());
+        return toResponse(CommonErrorCode.CONTENT_TOO_LARGE);
+    }
+
+    @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+    public ResponseEntity<ResponseEnvelope<Void>> handleUnsupportedMediaType(HttpMediaTypeNotSupportedException e) {
+        log.warn("unsupported media type. contentType={}", e.getContentType());
+        return toResponse(CommonErrorCode.UNSUPPORTED_MEDIA_TYPE);
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiResponse<Void>> handleUnexpectedException(Exception e) {
-        logServerError(e, ErrorCode.INTERNAL_ERROR);
-
-        return ResponseEntity
-                .internalServerError()
-                .body(ApiResponse.fail(ErrorCode.INTERNAL_ERROR));
+    public ResponseEntity<ResponseEnvelope<Void>> handleUnexpected(Exception e, HttpServletRequest request) {
+        log.error("unhandled exception. method={}, uri={}", request.getMethod(), request.getRequestURI(), e);
+        return toResponse(CommonErrorCode.INTERNAL_ERROR);
     }
 
-    @Override
-    protected ResponseEntity<Object> handleMethodArgumentNotValid(
-            MethodArgumentNotValidException ex, HttpHeaders headers,
-            HttpStatusCode status, WebRequest request
-    ) {
-        List<ValidationError> errors = toValidationErrors(ex.getBindingResult());
-        logClientError(ex, ErrorCode.INVALID_PARAMETER, errors);
-
-        return handleExceptionInternal(
-                ex, ApiResponse.fail(errors, ErrorCode.INVALID_PARAMETER), headers, status, request);
-    }
-
-    @Override
-    protected ResponseEntity<Object> handleHandlerMethodValidationException(
-            HandlerMethodValidationException ex, HttpHeaders headers,
-            HttpStatusCode status, WebRequest request
-    ) {
-        List<ValidationError> errors = ex.getParameterValidationResults().stream()
-                .flatMap(result -> result.getResolvableErrors().stream()
-                        .map(error -> ValidationError.of(
-                                result.getMethodParameter().getParameterName(),
-                                error.getDefaultMessage())))
-                .toList();
-
-        logClientError(ex, ErrorCode.INVALID_PARAMETER, errors);
-
-        return handleExceptionInternal(
-                ex, ApiResponse.fail(errors, ErrorCode.INVALID_PARAMETER), headers, status, request);
-    }
-
-    @Override
-    protected ResponseEntity<Object> handleMissingServletRequestParameter(
-            MissingServletRequestParameterException ex, HttpHeaders headers,
-            HttpStatusCode status, WebRequest request
-    ) {
-        ValidationError error =
-                ValidationError.of(ex.getParameterName(), "필수 요청 파라미터가 누락되었습니다.");
-        logClientError(ex, ErrorCode.INVALID_PARAMETER, "parameter=" + ex.getParameterName());
-
-        return handleExceptionInternal(
-                ex, ApiResponse.fail(List.of(error), ErrorCode.INVALID_PARAMETER), headers, status, request);
-    }
-
-    @Override
-    protected ResponseEntity<Object> handleExceptionInternal(
-            Exception ex, @Nullable Object body, HttpHeaders headers,
-            HttpStatusCode statusCode, WebRequest request
-    ) {
-        if (request instanceof ServletWebRequest servletWebRequest) {
-            HttpServletResponse response = servletWebRequest.getResponse();
-            if (response != null && response.isCommitted()) {
-                log.warn("event=RESPONSE_COMMITTED exception={} msg=\"{}\"",
-                        ex.getClass().getSimpleName(), ex.getMessage());
-                return null;
-            }
-        }
-
-        if (statusCode.equals(HttpStatus.INTERNAL_SERVER_ERROR) && body == null) {
-            request.setAttribute(WebUtils.ERROR_EXCEPTION_ATTRIBUTE, ex, WebRequest.SCOPE_REQUEST);
-        }
-
-        if (!(body instanceof ApiResponse<?>)) {
-            ErrorCode code = mapToErrorCode(statusCode);
-            logByStatus(ex, code, null);
-            body = ApiResponse.fail(code);
-        }
-
-        return createResponseEntity(body, headers, statusCode, request);
-    }
-
-    private void logByStatus(Exception ex, ResponseCode code, @Nullable Object detail) {
-        if (code.getStatus().is5xxServerError()) {
-            logServerError(ex, code);
-        } else {
-            logClientError(ex, code, detail);
-        }
-    }
-
-    private void logClientError(Exception ex, ResponseCode code, @Nullable Object detail) {
-        log.warn("event=CLIENT_ERROR code={} status={} exception={} detail=\"{}\" msg=\"{}\"",
-                code.name(),
-                code.getStatus().value(),
-                ex.getClass().getSimpleName(),
-                detail == null ? "-" : detail,
-                rootCauseMessage(ex));
-    }
-
-    private void logServerError(Exception ex, ResponseCode code) {
-        log.error("event=SERVER_ERROR code={} status={} exception={} msg=\"{}\"",
-                code.name(),
-                code.getStatus().value(),
-                ex.getClass().getSimpleName(),
-                rootCauseMessage(ex),
-                ex);
-    }
-
-    private String rootCauseMessage(Throwable ex) {
-        Throwable root = ex;
-        while (root.getCause() != null && root.getCause() != root) {
-            root = root.getCause();
-        }
-        String message = root.getMessage();
-        return message == null ? root.getClass().getSimpleName() : message;
-    }
-
-    private List<ValidationError> toValidationErrors(BindingResult bindingResult) {
-        Stream<ValidationError> fieldErrors = bindingResult.getFieldErrors().stream()
-                .map(e -> ValidationError.of(e.getField(), e.getDefaultMessage()));
-
-        Stream<ValidationError> globalErrors = bindingResult.getGlobalErrors().stream()
-                .map(e -> ValidationError.of(e.getObjectName(), e.getDefaultMessage()));
-
-        return Stream.concat(fieldErrors, globalErrors).toList();
-    }
-
-    private ErrorCode mapToErrorCode(HttpStatusCode status) {
-        if (status.equals(HttpStatus.METHOD_NOT_ALLOWED)) {
-            return ErrorCode.METHOD_NOT_ALLOWED;
-        }
-        if (status.equals(HttpStatus.NOT_FOUND)) {
-            return ErrorCode.NOT_FOUND;
-        }
-        if (status.is4xxClientError()) {
-            return ErrorCode.INVALID_PARAMETER;
-        }
-        return ErrorCode.INTERNAL_ERROR;
-    }
-
-    private String extractField(Path propertyPath) {
-        String path = propertyPath.toString();
-        int lastDot = path.lastIndexOf('.');
-        return lastDot == -1 ? path : path.substring(lastDot + 1);
+    private ResponseEntity<ResponseEnvelope<Void>> toResponse(ErrorCode errorCode) {
+        return ResponseEntity.status(errorCode.getHttpStatus())
+                .body(ResponseEnvelope.fail(errorCode));
     }
 }

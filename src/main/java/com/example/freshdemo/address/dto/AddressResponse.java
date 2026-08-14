@@ -1,6 +1,6 @@
 package com.example.freshdemo.address.dto;
 
-import com.example.freshdemo.address.domain.Address;
+import com.example.freshdemo.address.domain.entity.Address;
 import java.time.LocalDateTime;
 import lombok.Builder;
 

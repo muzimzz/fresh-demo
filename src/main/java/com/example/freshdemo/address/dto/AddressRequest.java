@@ -1,8 +1,9 @@
 package com.example.freshdemo.address.dto;
 
-import com.example.freshdemo.address.domain.Address;
 import jakarta.validation.constraints.NotBlank;
 
+// [LG-fm 컨벤션 리팩토링] toEntity()는 AddressService.create()로 옮겼다(Address.register()
+// 정적 팩토리가 memberId 등 여러 인자를 받아 서비스가 조립하는 편이 자연스러워졌다).
 public record AddressRequest(
         @NotBlank String recipient,
         @NotBlank String phone,
@@ -11,16 +12,4 @@ public record AddressRequest(
         String detailAddress,
         boolean isDefault
 ) {
-
-    public Address toEntity(Long memberId) {
-        return Address.builder()
-                .memberId(memberId)
-                .recipient(this.recipient)
-                .phone(this.phone)
-                .zipcode(this.zipcode)
-                .roadAddress(this.roadAddress)
-                .detailAddress(this.detailAddress)
-                .isDefault(this.isDefault)
-                .build();
-    }
 }

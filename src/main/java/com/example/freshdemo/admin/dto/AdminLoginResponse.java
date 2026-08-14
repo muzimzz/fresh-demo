@@ -1,7 +1,7 @@
 package com.example.freshdemo.admin.dto;
 
-import com.example.freshdemo.admin.domain.Admin;
-import com.example.freshdemo.admin.domain.AdminRole;
+import com.example.freshdemo.admin.domain.entity.Admin;
+import com.example.freshdemo.admin.domain.entity.AdminRole;
 
 public record AdminLoginResponse(Long adminId, String name, AdminRole role) {
 
