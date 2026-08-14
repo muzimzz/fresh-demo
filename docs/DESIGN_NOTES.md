@@ -116,7 +116,7 @@
 - 운영 전환 체크리스트: `JWT_SECRET` 관리 방식(시크릿 매니저 도입 여부) — 지금은 Redis 이중화 대신 `member`/`admin` 컬럼 기반 DB write-through+폴백으로 장애 대비를 해결하기로 결정 완료(1번 항목 참고). (`jwt.cookie.secure`는 `application-local.yaml`/`application-prod.yaml` 프로필 분리로 이미 반영됨 — 배포 시 `SPRING_PROFILES_ACTIVE=prod` 지정 필요.)
 - ✅ `Address`의 기본 배송지 강제 — 서비스 레이어 로직은 유지하면서, 목표 DDL과 같은 generated column(`is_default_key`) + UNIQUE를 추가로 걸어 DB 레벨 안전망을 얹었다. 다만 이 프로젝트는 Flyway가 없어(ddl-auto:update) 기존 테이블에 생성 컬럼을 추가하는 ALTER가 실제로 깨끗하게 먹히는지는 로컬에서 검증이 필요하다 — 안 먹으면 테이블을 드롭하고 재기동하거나 수동 ALTER TABLE이 필요하다(`Address` Javadoc 참고).
 - ✅→해결 `RefreshTokenBackup` 테이블의 row 증가/정리 문제 — 별도 테이블을 없애고 `member`/`admin`의 컬럼으로 옮기면서 자연히 해소됐다(정리할 별도 row 자체가 없어짐).
-- ✅→해결 관리자 액션 감사 로그를 별도 감사 테이블로 옮기는 문제 — `V1__init_schema.sql`의 `audit_log` 테이블을 그대로 반영해 해결(11번 항목 참고). 콘솔/JSON 로그는 대체되지 않고 그대로 유지(역할이 다름).
+- 관리자 액션 감사 로그를 지금의 콘솔/JSON 로그 라인 수준이 아니라 별도 감사 테이블(누가 조회해도 위변조 어려운 append-only 저장소)로 옮길지 — 지금은 `logback-spring.xml`이 찍는 로그가 사실상 유일한 기록. (`V1__init_schema.sql`에 `audit_log` 테이블이 정의되어 있으나, 이번 라운드에서는 반영하지 않기로 함 — 필요해지면 재검토.)
 - `AccessTokenValidAfterRepository`의 fail-open 정책 재검토 — 지금은 Redis 장애 시 이 방어선을 그냥 건너뛰는데, 실서비스 규모에서 Redis 가용성이 충분히 보장되면(다중화 등) fail-closed로 바꾸는 게 나을 수도 있음. 비밀번호 변경/회원 차단 기능이 생기면 그 시점에도 `invalidateBefore()`를 호출하는 코드를 추가해야 함(지금은 훅만 없고 호출부는 없음).
 - `HttpBodyLoggingFilter`의 `PHONE_PATTERN`은 국내 휴대폰 번호 형식만 커버 — 해외 진출 시 국제전화번호 형식도 같이 잡게 확장 필요.
 - `ExternalApiLoggingExchangeFilter`가 URL을 그대로 로그에 남김 — 지금 쓰는 카카오 API는 쿼리 파라미터에 민감정보가 없어서 괜찮지만, 나중에 쿼리 파라미터에 토큰/키가 실리는 외부 API(일부 결제 API 등)를 추가하면 URL 마스킹을 추가해야 함.
@@ -153,12 +153,10 @@
   강제하게 했다(`Address`엔 이미 있었는데 `MemberGrade`만 빠져 있던 안전장치).
 - ✅ `Address.detailAddress`를 `nullable=false`에서 DDL대로 `nullable=true`로 고쳤다 — `AddressRequest`가
   선택 필드로 취급하는 것과 어긋나 있던 실제 버그(상세주소 없이 등록하면 NOT NULL 위반 가능성)였다.
-- ✅ `audit_log` 테이블(`AuditLog`/`AuditLogRepository`, `common.audit` 패키지)을 새로 반영했다.
-  상품/주문 등 다른 도메인 액션도 같이 쌓는 공용 테이블이라 도메인 패키지가 아니라 `common` 아래에
-  뒀고, 이번 범위에서는 `AdminService.register()`/`deleteAdmin()`(관리자 등록/삭제) 두 액션만
-  `action=ADMIN_REGISTER`/`ADMIN_DELETE`로 기록한다. 콘솔/JSON 로그(`event=ADMIN_REGISTERED` 등)는
-  대체하지 않고 그대로 유지 — 실시간 관찰용과 영속 감사 기록용으로 역할이 다르다. 다른 도메인
-  액션(`PRODUCT_DELETE` 등)은 해당 도메인이 생길 때 같은 테이블/엔티티를 재사용하면 된다.
+- ⬜ `audit_log` 테이블 — DDL엔 정의되어 있으나 이번 라운드에서는 반영하지 않기로 했다(한 차례
+  `AuditLog`/`AuditLogRepository`로 구현해 `AdminService.register()`/`deleteAdmin()`에 연결했다가,
+  이번 세션에서 다시 제거함). 상품/주문 등 다른 도메인 액션도 같이 쌓는 공용 테이블이라, 필요해지면
+  그때 다시 다룬다.
 - ✅ 죽은 코드 정리 — `ErrorCode.KAKAO_WEBHOOK_INVALID` 제거(카카오 웹훅은 검증 실패 시에도 항상
   200을 줘야 해서 애초에 쓰일 수 없었던 코드), `docs/API.md` 삭제(최신 코드와 어긋난 채 방치돼 있었고
   — PK가 Long인데 `uuid`로 표기, `PATCH /admin/me/password` 누락 등 — 지금 시점엔 불필요 판단).
