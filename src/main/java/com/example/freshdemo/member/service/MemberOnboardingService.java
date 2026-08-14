@@ -23,7 +23,7 @@ public class MemberOnboardingService {
     private final MemberRepository memberRepository;
 
     @Transactional
-    public Member completeOnboarding(Long memberId, String name, String nickname, boolean marketingAgreed) {
+    public Member completeOnboarding(Long memberId, String name, String email, String nickname, boolean marketingAgreed) {
         Member member = memberRepository.findById(memberId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.MEMBER_NOT_FOUND));
 
@@ -36,6 +36,8 @@ public class MemberOnboardingService {
             throw new BusinessException(ErrorCode.DUPLICATE_NICKNAME);
         }
 
-        return member.completeOnboarding(name, nickname, LocalDateTime.now(), marketingAgreed);
+        // email은 nickname과 달리 유니크 제약이 없다(목표 DDL도 UNIQUE를 안 건다) — 로그인 식별자가
+        // 아니라 순수 연락처 정보라서 중복 검사를 안 한다.
+        return member.completeOnboarding(name, nickname, email, LocalDateTime.now(), marketingAgreed);
     }
 }

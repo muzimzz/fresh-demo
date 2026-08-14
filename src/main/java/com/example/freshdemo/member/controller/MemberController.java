@@ -4,8 +4,10 @@ import com.example.freshdemo.auth.CustomUserDetails;
 import com.example.freshdemo.common.response.ApiResponse;
 import com.example.freshdemo.member.domain.Member;
 import com.example.freshdemo.member.dto.MemberOnboardingRequest;
+import com.example.freshdemo.member.dto.MemberProfileUpdateRequest;
 import com.example.freshdemo.member.dto.MemberResponse;
 import com.example.freshdemo.member.service.MemberOnboardingService;
+import com.example.freshdemo.member.service.MemberProfileUpdateService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -22,11 +24,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class MemberController {
 
     private final MemberOnboardingService memberOnboardingService;
+    private final MemberProfileUpdateService memberProfileUpdateService;
 
     /**
-     * 카카오 최초 로그인(PENDING_PROFILE) 이후 필수 온보딩 정보(이름+닉네임+약관동의)를 채워 ACTIVE로 넘긴다.
-     * 이 값이 채워지기 전까진 로그인 리다이렉트의 pendingProfile=true가 계속 내려간다 — 프론트는
-     * 그 신호를 보고 로그인할 때마다 이 화면으로 강제 리다이렉트하면 된다.
+     * 카카오 최초 로그인(PENDING_PROFILE) 이후 필수 온보딩 정보(이름+이메일+닉네임+약관동의)를 채워
+     * ACTIVE로 넘긴다. 이 값이 채워지기 전까진 로그인 리다이렉트의 pendingProfile=true가 계속
+     * 내려간다 — 프론트는 그 신호를 보고 로그인할 때마다 이 화면으로 강제 리다이렉트하면 된다.
      */
     @PatchMapping("/me/onboarding")
     public ResponseEntity<ApiResponse<MemberResponse>> completeOnboarding(
@@ -34,7 +37,21 @@ public class MemberController {
             @RequestBody @Valid MemberOnboardingRequest request
     ) {
         Member member = memberOnboardingService.completeOnboarding(
-                userDetails.getId(), request.name(), request.nickname(), request.marketingAgreed());
+                userDetails.getId(), request.name(), request.email(), request.nickname(), request.marketingAgreed());
+        return ResponseEntity.ok(ApiResponse.of(MemberResponse.from(member)));
+    }
+
+    /**
+     * 요구사항의 "회원 정보 관리"(이름/이메일/닉네임/휴대폰/주소 변경). 온보딩과 달리 상태 전이가
+     * 없고 이미 ACTIVE인 회원이 언제든 다시 호출할 수 있는 일반 프로필 수정 API다.
+     */
+    @PatchMapping("/me")
+    public ResponseEntity<ApiResponse<MemberResponse>> updateProfile(
+            @AuthenticationPrincipal CustomUserDetails userDetails,
+            @RequestBody @Valid MemberProfileUpdateRequest request
+    ) {
+        Member member = memberProfileUpdateService.updateProfile(
+                userDetails.getId(), request.name(), request.email(), request.nickname(), request.phone(), request.address());
         return ResponseEntity.ok(ApiResponse.of(MemberResponse.from(member)));
     }
 }

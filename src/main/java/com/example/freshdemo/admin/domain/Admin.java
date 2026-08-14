@@ -41,16 +41,29 @@ public class Admin extends LongMutableBaseEntity {
     @Column(nullable = false)
     private AdminRole role;
 
-    // 목표 DDL의 admin 테이블엔 이 두 컬럼이 없다 — DDL 작성자가 관리자 세션의 Redis 장애 대비까지는
-    // 고려하지 않은 것으로 보인다. 그래도 관리자도 회원과 동일하게 refreshToken을 발급받고
-    // RefreshTokenRepository를 공유해서 쓰므로(회원/관리자 로그인 로직이 본질적으로 같다는 판단,
-    // AuthController 참고), DB 백업이 회원만 있고 관리자만 없으면 비대칭이 생긴다 — Member와
-    // 대칭으로 여기도 추가했다(Member.refreshTokenHash 주석 참고).
+    // 처음 DDL 초안엔 admin에 이 두 컬럼이 없어서, 회원/관리자 로그인이 RefreshTokenRepository를
+    // 공유하는데 DB 백업이 회원만 있고 관리자만 없으면 비대칭이 생긴다는 이유로 자체적으로
+    // 추가했었다(Member.refreshTokenHash 주석과 같은 근거). 이후 받은 DDL 갱신본에 이 두 컬럼이
+    // 실제로 추가되어, 이제는 DDL 그대로다 — 자체 추가했던 판단이 맞았던 셈이다.
     @Column(name = "refresh_token_hash", length = 64)
     private String refreshTokenHash;
 
     @Column(name = "refresh_token_expires_at")
     private LocalDateTime refreshTokenExpiresAt;
+
+    // 목표 DDL의 admin.status(ACTIVE/DELETED) — 요구사항 정의서의 "관리자 삭제(비활성화)"가
+    // "삭제 대신 비활성 처리"를 요구하는데, 이 필드가 없으면 그게 구조적으로 불가능했다(예전엔
+    // AdminService.deleteAdmin()이 실제 row를 지웠음). 이제 delete()가 이 값을 DELETED로 바꾸는
+    // 방식으로 대체한다.
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 30)
+    private AdminStatus status;
+
+    // DDL의 chk_admin_deleted CHECK: status='DELETED'면 이 값도 채워지고 refresh_token_hash는
+    // 반드시 NULL이어야 한다. Flyway가 없어 CHECK로 강제 못 하니 delete() + AdminService가
+    // (deletedAt 세팅 / refreshToken 클리어) 둘을 같은 트랜잭션에서 맞춘다(Member.deletedAt과 같은 처리).
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
 
     @Builder
     private Admin(String loginId, String passwordHash, String name, AdminRole role) {
@@ -58,6 +71,30 @@ public class Admin extends LongMutableBaseEntity {
         this.passwordHash = passwordHash;
         this.name = name;
         this.role = (role != null) ? role : AdminRole.ADMIN;
+        this.status = AdminStatus.ACTIVE;
+    }
+
+    public boolean isDeleted() {
+        return this.status == AdminStatus.DELETED;
+    }
+
+    /** 인코딩된(해시) 비밀번호만 받는다 — 원문 인코딩은 AdminService(PasswordEncoder 보유)의 책임. */
+    public void changePassword(String encodedPassword) {
+        this.passwordHash = encodedPassword;
+    }
+
+    /**
+     * 소프트 삭제("비활성 처리"). refreshTokenHash는 여기서 직접 건드리지 않는다 — 그 컬럼은
+     * RefreshTokenRepository만 쓰기로 한 규칙이 있어서(Member와 동일), 호출자(AdminService)가
+     * 같은 트랜잭션 안에서 refreshTokenRepository.delete()를 같이 호출해 DDL의 CHECK 불변식
+     * (DELETED면 refresh_token_hash IS NULL)을 맞춰야 한다.
+     */
+    public void delete() {
+        if (isDeleted()) {
+            return;
+        }
+        this.status = AdminStatus.DELETED;
+        this.deletedAt = LocalDateTime.now();
     }
 
     /**
@@ -67,7 +104,7 @@ public class Admin extends LongMutableBaseEntity {
      */
     @Override
     public String toString() {
-        return "Admin{id=%s, loginId=%s, name=%s, role=%s}"
-                .formatted(getId(), loginId, PiiMasker.maskName(name), role);
+        return "Admin{id=%s, loginId=%s, name=%s, role=%s, status=%s}"
+                .formatted(getId(), loginId, PiiMasker.maskName(name), role, status);
     }
 }

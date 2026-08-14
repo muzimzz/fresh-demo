@@ -37,6 +37,12 @@ public class Member extends LongMutableBaseEntity {
     @Column(name = "active_provider_key", unique = true, length = 45)
     private String activeProviderKey;
 
+    // 목표 DDL 코멘트는 "카카오 제공 이메일"이지만, 실제로는 카카오에서 받아오지 않기로 했다 —
+    // name과 마찬가지로 온보딩 폼 입력값을 저장한다(completeOnboarding() 참고). 카카오 OIDC의
+    // account_email 동의도 더 이상 요청하지 않는다(OAuthAttributes/application.yaml 참고).
+    // 카카오 로그인마다 값을 덮어쓰는 코드도 없다 — 이전엔 update(String)로 매 로그인마다
+    // 카카오 값을 덮어썼는데, 그 메서드 자체를 없앴다.
+    @Column(length = 255)
     private String email;
 
     @Column(unique = true, length = 20)
@@ -104,16 +110,15 @@ public class Member extends LongMutableBaseEntity {
     private LocalDateTime refreshTokenExpiresAt;
 
     @Builder
-    private Member(SocialType socialType, String socialTypeId, String email, MemberRole role, Long memberGradeId) {
+    private Member(SocialType socialType, String socialTypeId, MemberRole role, Long memberGradeId) {
         this.socialType = socialType;
         this.socialTypeId = socialTypeId;
         this.activeProviderKey = buildActiveProviderKey(socialType, socialTypeId);
-        this.email = email;
         this.role = (role != null) ? role : MemberRole.ROLE_USER;
         this.memberGradeId = Objects.requireNonNull(memberGradeId, "memberGradeId");
-        // 카카오 최초 로그인 시 이메일 정도만 갖고 바로 만들어지는 회원이라, 필수 온보딩 정보
-        // (닉네임/약관동의)를 받기 전까지는 PENDING_PROFILE로 시작한다 — completeOnboarding()
-        // 호출 전까지는 미완성 상태.
+        // 카카오 최초 로그인 시점엔 sub(식별자) 말고 아무 프로필 정보도 안 받는다 — email도 이제
+        // 온보딩 폼 입력이라(위 email 필드 주석 참고), 필수 온보딩 정보(이름/이메일/닉네임/약관동의)를
+        // 받기 전까지는 PENDING_PROFILE로 시작한다 — completeOnboarding() 호출 전까지는 미완성 상태.
         this.status = MemberStatus.PENDING_PROFILE;
     }
 
@@ -122,29 +127,45 @@ public class Member extends LongMutableBaseEntity {
         return socialType.name() + ":" + socialTypeId;
     }
 
-    public Member update(String email) {
-        if (email != null) {
-            this.email = email;
-        }
-        return this;
-    }
-
     public Member assignNickname(String nickname) {
         this.nickname = nickname;
         return this;
     }
 
     /**
-     * 가입 직후 PENDING_PROFILE 상태에서 필수 온보딩 정보(이름 + 닉네임 + 약관동의)를 채워 ACTIVE로
-     * 넘긴다. phone/address는 선택 항목이라 여기서 안 받는다(첫 배송 시점에 별도로 받기로 함).
+     * 요구사항의 "회원 정보 관리"(이름/닉네임/이메일/휴대폰/주소 변경). email이 카카오 관리 값이
+     * 아니게 되면서(위 email 필드 주석 참고) 더 이상 "카카오가 덮어써서 못 바꾼다"는 제약이 없어져,
+     * 다른 필드와 동일하게 이 API로 바꿀 수 있다.
+     *
+     * phone/address는 null이면 그대로 두고, 빈 문자열("")이면 지운다 — 온보딩과 달리 이 API는
+     * 부분 수정(PATCH)이라 "이 필드는 이번에 안 건드린다"와 "이 필드를 비운다"를 구분해야 한다.
+     * name/nickname/email은 프로필 전체를 다시 제출하는 폼을 가정해 항상 값이 온다고 본다.
+     */
+    public Member updateProfile(String name, String nickname, String email, String phone, String address) {
+        this.name = name;
+        assignNickname(nickname);
+        this.email = email;
+        if (phone != null) {
+            this.phone = phone.isBlank() ? null : phone;
+        }
+        if (address != null) {
+            this.address = address.isBlank() ? null : address;
+        }
+        return this;
+    }
+
+    /**
+     * 가입 직후 PENDING_PROFILE 상태에서 필수 온보딩 정보(이름 + 이메일 + 닉네임 + 약관동의)를 채워
+     * ACTIVE로 넘긴다. phone/address는 선택 항목이라 여기서 안 받는다(첫 배송 시점에 별도로 받기로 함).
      *
      * 이미 ACTIVE인 회원이 다시 호출해도(정보 변경) 에러 없이 값만 갱신한다 — 상태 전이는
      * PENDING_PROFILE일 때만 일어난다. 약관 동의 자체를 거부하는 경로는 이 메서드에 안 들어온다
      * (요청 DTO의 @AssertTrue가 컨트롤러 진입 전에 이미 막음 — MemberOnboardingRequest 참고).
      */
-    public Member completeOnboarding(String name, String nickname, LocalDateTime termsAgreedAt, boolean marketingAgreed) {
+    public Member completeOnboarding(String name, String nickname, String email, LocalDateTime termsAgreedAt, boolean marketingAgreed) {
         this.name = name;
         assignNickname(nickname);
+        this.email = email;
         this.termsAgreedAt = termsAgreedAt;
         this.marketingAgreed = marketingAgreed;
         if (this.status == MemberStatus.PENDING_PROFILE) {

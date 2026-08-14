@@ -25,14 +25,16 @@
 - ✅ Kakao OIDC `scope=openid` 명시 필요 여부 확인. Spring Security의 oauth2Login은 scope 파라미터를 항상 명시적으로 보내는 구조라 openid를 빼면 안 됨 — 기존 설정이 이미 맞았음(검증만 하고 코드 변경 없음).
 - ✅ `provider_user_id`(카카오 `sub`)와 내부 `memberId`(Long PK)는 완전히 분리된 필드. 애초부터 그렇게 구현돼 있었음.
 - ✅ 카카오 `sub`이 unlink→relink 후에도 값이 안 바뀐다는 것을 카카오 공식 지원 답변(devtalk, 2026-03)으로 확인 — `active_provider_key` 설계가 안전하게 성립하는 전제.
+- ✅ **email을 카카오에서 받지 않기로 결정 — 온보딩 폼 입력으로 전환.** 목표 DDL 코멘트는 "카카오 제공 이메일"이지만, 카카오 OIDC는 로그인 전용으로만 쓰고 개인정보(이메일 포함)는 전부 폼으로 받기로 했다(요구사항 예외사항 "카카오 oidc는 로그인 전용, 개인정보는 폼으로 입력받기"와 원래부터 일치하는 방향). `account_email` scope 동의 요청 자체를 없앴고(`application.yaml`), `OAuthAttributes`도 `socialTypeId`만 남기고 email 추출을 없앴다. 최초 가입 시에도 카카오 값으로 채우지 않고, 로그인마다 덮어쓰던 `Member.update(String)`도 완전히 제거했다 — "카카오에서는 최초 1회도 받지 않고, 이후로도 절대 덮어쓰지 않는다"는 원칙. `nickname`도 이미 같은 이유로 카카오 값을 안 쓰고 있었다(자체 폼 수집, 변경 없음) — DDL 코멘트("카카오 제공 닉네임")와 실제 동작이 다르다는 점은 email과 동일하지만, 이건 이미 이전부터 그렇게 구현돼 있었다.
 - ✅ **`active_provider_key` 도입.** `"{social_type}:{social_type_id}"` 형태의 필드 하나에만 UNIQUE를 걸고, `social_type`/`social_type_id` 자체의 유니크 제약은 제거. 탈퇴 시 이 필드를 null로 비워서 이력(social_type_id 등)은 행에 남기되 같은 소셜 계정으로 재가입할 자리를 비켜줌.
 - ✅ `reactivate()` 제거. 재가입은 옛 행을 되살리는 게 아니라 새 행을 만드는 방식으로 전환(`CustomOidcUserService`, `MemberWithdrawalService`가 전부 `findByActiveProviderKey` 기준으로 전환됨).
 
 ## 3. 온보딩 & 회원 상태
 
 - ✅ `isNewMember`(생성 이벤트 플래그) → `pendingProfile`(상태 기반) 전환. 온보딩 중 브라우저를 닫아도 다음 로그인 때 정확한 값이 다시 내려옴.
-- ✅ 필수 항목(닉네임 + 약관동의)과 선택 항목(전화/주소, 첫 배송 시 수집) 분리. `MemberOnboardingRequest`가 필수만 받음.
+- ✅ 필수 항목(이름 + 이메일 + 닉네임 + 약관동의)과 선택 항목(전화/주소, 첫 배송 시 수집) 분리. `MemberOnboardingRequest`가 필수만 받음(email 추가 — 위 2번 항목 참고).
 - ✅ 닉네임은 카카오 제공값이 아니라 자체 폼으로 수집.
+- ✅ **`PATCH /members/me`(회원 정보 관리) 신규 추가.** 요구사항의 "이름, 닉네임, 이메일, 휴대폰, 주소 변경" 다섯 항목 전부 구현. 처음엔 email을 뺐었다(그때는 카카오 로그인마다 email을 덮어쓰는 구조라 이 API로 바꿔도 되돌아갔음) — 이후 email 자체를 카카오에서 안 받기로 하면서(2번 항목) 그 제약이 없어져 다시 넣었다. 온보딩(`MemberOnboardingService`, PENDING_PROFILE→ACTIVE 전이 담당)과는 별도 서비스(`MemberProfileUpdateService`, 원래 이름 `MemberProfileService`에서 개명 — `MemberOnboardingService`와 이름이 너무 비슷해서 헷갈림)로 분리 — 이미 ACTIVE인 회원이 상태 전이 없이 프로필만 고치는 유스케이스라 책임이 다름. phone/address는 `null`이면 유지, 빈 문자열이면 명시적으로 지움(PATCH 부분수정 시맨틱).
 
 ## 4. 탈퇴
 
@@ -50,6 +52,12 @@
 - ✅ 계정 존재 여부 비노출(로그인 실패 시 "없음"과 "비번 틀림"을 같은 에러로 응답).
 - ✅ 관리자 액션 감사 로그. 로그인 성공/계정 발급/계정 삭제에 `event=ADMIN_LOGIN_SUCCESS` / `ADMIN_REGISTERED` / `ADMIN_DELETED`로 actorId(요청자)/targetId(대상)만 남김 — 권한 상승·회수로 직결되는 민감 액션이라 "누가 언제 누구에게" 했는지는 추적 가능해야 한다는 원칙(8번 항목의 "비즈니스 로그는 id만" 원칙과 동일선상).
 - ✅ **관리자 로그인 실패 로그(`ADMIN_LOGIN_FAILED`).** 계정 없음(`reason=NO_SUCH_ACCOUNT`, loginId로 식별)과 비번 틀림(`reason=WRONG_PASSWORD`, adminId로 식별)을 로그에서만 구분해서 남김 — HTTP 응답은 기존처럼 계정 존재 여부를 안 드러내려고 둘 다 동일한 에러 유지, 구분은 우리끼리 보는 로그에만 존재. 브루트포스(같은 계정에 비번만 계속 틀림)와 계정 나열 공격(존재하지 않는 아이디를 계속 시도)을 로그로 구분해서 보기 위함.
+- ✅ **`Admin.status`(ACTIVE/DELETED) 도입 — 삭제를 소프트 삭제로 전환.** 목표 DDL 갱신본에 `admin.status`/`deleted_at`이 새로 추가되면서("이력 표 다섯이 admin_id를 참조해 하드 삭제가 불가능하다"), 예전의 `adminRepository.deleteById()` 하드 삭제를 `target.delete()`(status=DELETED, deletedAt=now)로 바꿨다. `login()`도 `status=DELETED`인 계정을 "계정 없음"과 동일한 `INVALID_PASSWORD`로 거부하도록(로그에만 원인 구분) 추가 — DDL 예외사항의 "비활성 계정 로그인 불가"를 "실패 사유 미노출" 원칙과 함께 만족시킨다.
+- ✅ **관리자 삭제 예외 가드 추가.** 요구사항의 "본인 및 마지막 최고관리자는 비활성화 불가"를 반영 — 자기 자신을 대상으로 하는 삭제 요청은 `CANNOT_DELETE_SELF`로 거부하고, 대상이 `SUPER_ADMIN`이면 삭제 후에도 ACTIVE한 `SUPER_ADMIN`이 최소 1명 남는지(`AdminRepository.countByRoleAndStatus`) 확인해 마지막 1명이면 `LAST_SUPER_ADMIN_CANNOT_BE_DELETED`로 거부한다.
+- ✅ **관리자 삭제 시 AT 즉시 무효화 추가.** 예전엔 `refreshTokenRepository.delete()`(RT만)만 호출해서, 삭제 직후에도 이미 발급된 accessToken이 자연 만료(최대 1시간)까지 유효했다 — `MemberWithdrawalService`와 동일하게 `accessTokenValidAfterRepository.invalidateBefore()`를 같이 호출하도록 고쳤다.
+- ✅ **임시 비밀번호 발급(`TempPasswordGenerator`) + 본인 비밀번호 변경(`PATCH /admin/me/password`).** "강제"는 빼기로 했다 — 플래그 없이 로그인마다 "아직 임시 비밀번호를 안 바꿨는지"를 판정할 방법이 없어서(아래 참고), 강제 대신 "발급 시점에 1회 평문으로 보여준다(그 이후로는 절대 조회 불가) + 언제든 바꿀 수 있는 API를 둔다"로 범위를 좁혔다. `AdminRegisterRequest`에서 `password` 필드를 없애고 서버가 `SecureRandom` 기반으로 생성(`identifier-strategy-guideline.md`의 SecureRandom 원칙과 동일)해 `AdminRegisterResponse.temporaryPassword`에 딱 한 번 담아 응답한다. `PATCH /admin/me/password`는 현재 비밀번호 확인 후 교체하고, 요구사항의 "변경 시 토큰 전량 폐기"대로 RT/AT를 모두 무효화해 재로그인을 요구한다.
+  - **필드 추가 없이 "강제"가 가능한가?** 등록 직후 1회성 안내(응답에 임시비밀번호가 실리는 순간 자체가 신호)는 필드 없이 가능하지만, "아직 안 바꿨으면 로그인할 때마다 계속 알려준다"는 지속적 신호는 서버가 그 상태를 어딘가에 저장해야 해서 필드 없이는 불가능하다 — `updated_at`이 바뀌었는지로 유추하는 방법도 있지만, 다른 이유(이름 변경 등)로도 바뀔 수 있어 신뢰할 수 없다. 필요해지면 `must_change_password` 컬럼 추가가 정공법.
+- ⬜ **로그인 실패 5회 시 30분 잠금.** 미구현. Redis(카운터+TTL, DB 스키마 변경 없음, 이 프로젝트에서 로그인은 hot path가 아니라 성능 이점은 크지 않음) vs DB(`admin`에 `failed_login_attempts`/`locked_until` 컬럼 추가, 어차피 fail-open을 받아들일 거면 Redis 장애 시나리오에서 취약해지는 이점 없는 리스크를 감수할 이유가 없고, 이미 `findByLoginId`로 admin row를 읽는 시점에 같이 읽을 수 있어 추가 네트워크 왕복도 없음) 사이에서 재논의 필요 — 상세 트레이드오프는 대화 기록 참고, 현재는 DB 쪽이 더 설득력 있다는 결론에 가까움.
 
 ## 6. 배송지(Address)
 

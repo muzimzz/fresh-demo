@@ -6,14 +6,22 @@
          ================================================================ -->
     <springProfile name="local">
         <!-- %line(파일명:라인번호)은 caller data가 필요해서 성능 비용이 있다 — 로컬은 트래픽이
-             적고 동기 로깅이라 부담이 작고, IntelliJ 콘솔은 "(ClassName.java:42)" 패턴을 인식해서
+             적고 동기 로깅이라 부담이 작고, IntelliJ 콘솔은 "ClassName.java:42" 패턴을 인식해서
              클릭하면 바로 그 줄로 이동하는 링크로 만들어주기 때문에 로컬에서만 켠다. prod는
              AsyncAppender의 includeCallerData=false와 일관되게 caller data를 아예 안 켠다
              (비동기 로깅에서 caller data 계산 비용이 더 커지기 때문 — 아래 prod 프로필 참고). -->
+        <!-- (2026-08-14 13:19) 콘솔 출력이 전부 한 줄로 붙어버리는 버그 수정 — %cyan(%logger{36})
+             바로 뒤에 리터럴 괄호 "(%F:%line)"이 이어지면 Logback PatternParser가 그 여는 괄호를
+             또 다른 컴포지트 컨버터(%word(...) 형태)의 시작으로 오인해서, 그 뒤 " - %msg%n"까지
+             전부 파싱에 실패해 통째로 사라지는 현상이 있었다(raw 파일로 직접 확인해서 IntelliJ
+             콘솔 렌더링 문제가 아니라 패턴 파싱 문제임을 확인). 괄호를 제거해 리터럴 "(" 충돌을
+             없앴다. 또한 %X{traceId:-} 같은 ":-" 기본값 문법은 Log4j2 전용이라 Logback의 %X는
+             지원하지 않는다(그동안 MDC 값이 항상 빈 문자열로 나온 원인) — 콜론 없이 %X{traceId}로
+             수정. -->
         <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
             <encoder>
                 <pattern>
-                    %d{yyyy-MM-dd HH:mm:ss.SSS} %highlight(%-5level) [%thread] [%X{traceId:-}] %X{method:-} %X{uri:-} %X{clientIp:-} %cyan(%logger{36}) (%F:%line) - %msg%n
+                    %d{yyyy-MM-dd HH:mm:ss.SSS} %highlight(%-5level) [%thread] [%X{traceId}] %X{method} %X{uri} %X{clientIp} %cyan(%logger{36}) %F:%line - %msg%n
                 </pattern>
             </encoder>
         </appender>

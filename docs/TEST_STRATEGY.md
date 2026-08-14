@@ -192,12 +192,14 @@ PK 타입과 무관하게 동일하다.)
 - [정상] 403/401 JSON 바디가 각각 `ErrorCode.FORBIDDEN`/`UNAUTHORIZED` 포맷과 일치
 
 ### 3.14 회원 온보딩(MemberOnboardingService) — **[3순위·통합]**
-- [정상] 온보딩 완료 후 이름/닉네임/약관동의/마케팅동의 반영, `PENDING_PROFILE`→`ACTIVE`
+- [정상] 온보딩 완료 후 이름/이메일/닉네임/약관동의/마케팅동의 반영, `PENDING_PROFILE`→`ACTIVE`
 - [상태] 이미 `ACTIVE`인 회원이 재호출(정보 변경) — 상태 전이는 없고 값만 갱신됨(에러 아님)
 - [에러] 탈퇴한 회원이 호출 → `MEMBER_ALREADY_WITHDRAWN`
 - [에러] 다른 사람이 쓰는 닉네임으로 변경 시도 → `DUPLICATE_NICKNAME`
 - [경계] **본인이 원래 쓰던 닉네임 그대로 재호출** → 중복으로 안 침(현재 코드의 명시적 예외 처리) — 이전 목록에서 가장 크게 빠졌던 케이스
-- [경계] 요청 DTO 검증: `name`/`nickname` blank/길이초과 → 400(`@NotBlank`/`@Size`), `termsAgreed=false` → 400(`@AssertTrue`)
+- [경계] email은 중복 검사 없음(닉네임과 달리 유니크 제약이 없는 순수 연락처 정보) — 같은 이메일로 여러 회원이 등록돼도 정상 동작하는지 확인하는 회귀 테스트
+- [경계] 요청 DTO 검증: `name`/`email`/`nickname` blank/형식 오류/길이초과 → 400(`@NotBlank`/`@Email`/`@Size`), `termsAgreed=false` → 400(`@AssertTrue`)
+- **[신규 발견 — 회귀 확인용]** 카카오 재로그인 시 email이 더 이상 갱신되지 않는지 — `CustomOidcUserService`가 기존 회원을 찾으면 아무 필드도 덮어쓰지 않고 그대로 반환하는지 확인(예전엔 `member.update(attrs.email())`로 매번 덮어썼던 동작이 사라졌음)
 - **[신규]** 신규 회원 생성 시점(`CustomOidcUserService`)에 `MemberGrade.isDefault=true`인 행이 없으면 `DEFAULT_MEMBER_GRADE_NOT_FOUND`로 가입 자체가 실패하는지 — `DefaultMemberGradeInitializer`가 기동 시 시드를 넣어주지만, 그 시드가 실패했거나 나중에 지워진 상태를 가정한 회귀 테스트
 
 ### 3.15 회원 탈퇴(MemberWithdrawalService, KakaoUnlinkEventListener) — **[3순위·통합]**
@@ -219,11 +221,28 @@ PK 타입과 무관하게 동일하다.)
 - [경계] 요청 DTO 검증: `recipient`/`phone`/`zipcode`/`roadAddress` blank → 400(`detailAddress`는 검증 없음 — 의도적으로 선택 항목인지 확인)
 
 ### 3.17 관리자 계정 관리(AdminController/AdminService) — **[2순위·통합]**
-- [정상] SUPER_ADMIN이 계정 발급 → 항상 `role=ADMIN`으로 생성(요청 DTO에 role 필드 자체가 없어서 승격 요청 자체가 불가능 — 별도 테스트 불필요할 만큼 구조적으로 막힘)
+- [정상] SUPER_ADMIN이 계정 발급 → 항상 `role=ADMIN`으로 생성(요청 DTO에 role 필드 자체가 없어서 승격 요청 자체가 불가능 — 별도 테스트 불필요할 만큼 구조적으로 막힘), `status=ACTIVE`로 시작
 - [에러] SUPER_ADMIN이 아닌 요청자가 발급/삭제 시도 → `NOT_SUPER_ADMIN`(2번 섹션 권한 매트릭스와 별개로, 서비스 레이어 자체도 이 검사를 하므로 **URL 레벨 검사가 뚫려도 여기서 한 번 더 막힌다** — 이중 방어이므로 두 레이어 각각 테스트 필요, 하나가 다른 하나를 대신할 수 없음)
 - [에러] 삭제 대상 `adminId`가 없음 → `ADMIN_NOT_FOUND`
-- [정상] 관리자 삭제 시 그 관리자의 refreshToken도 같이 삭제(재발급으로 계속 살아있지 못하게)
-- [경계] SUPER_ADMIN이 **자기 자신**을 삭제하는 경우 — 막는 코드가 없음. 마지막 SUPER_ADMIN이 자기 자신을 지우면 이후 아무도 계정을 발급/삭제할 수 없는 상태가 될 수 있다("마지막 남은 관리자" 케이스, 리뷰 규칙의 경계값 예시와 정확히 일치) — 막을지 말지는 설계 판단이 필요하지만, 최소한 지금 동작(막지 않음)을 테스트로 고정해두면 나중에 논의할 때 근거가 된다
+- [정상] 관리자 삭제 = 소프트 삭제 — `status=DELETED`/`deletedAt` 세팅, 실제 row는 남음(하드 삭제 아님). `login_id`는 재사용 안 됨(DDL UNIQUE 유지) → 같은 `loginId`로 재등록 시도 시 `DUPLICATE_LOGIN_ID`
+- [정상] 관리자 삭제 시 그 관리자의 refreshToken도 같이 삭제(재발급으로 계속 살아있지 못하게) + `accessTokenValidAfterRepository.invalidateBefore()`로 이미 발급된 AT도 즉시 무효화(RT만 지우면 AT는 자연 만료까지 유효했던 예전 갭 — 회귀 테스트로 고정)
+- [에러] SUPER_ADMIN이 **자기 자신**을 삭제 시도 → `CANNOT_DELETE_SELF`(요구사항 "본인 비활성화 불가" 반영 — 이전엔 막는 코드가 없었던 갭)
+- [에러] 삭제 대상이 **마지막 남은 ACTIVE SUPER_ADMIN**인 경우 → `LAST_SUPER_ADMIN_CANNOT_BE_DELETED`(요구사항 "최고관리자 1명 이상 유지" 반영). **경계**: SUPER_ADMIN이 2명 이상일 때 그중 1명 삭제는 허용되는지 함께 확인
+- [에러] 이미 `DELETED` 상태인 관리자를 다시 삭제 시도 → `ADMIN_ALREADY_DELETED`
+- [에러] `status=DELETED`인 계정으로 로그인 시도 → `INVALID_PASSWORD`(계정 없음과 동일한 응답 — 응답으로는 구분 안 됨, 로그의 `reason=DELETED_ACCOUNT`로만 구분되는지 확인)
+- [정상] 계정 발급 시 요청에 비밀번호 필드가 없음(`AdminRegisterRequest`) — 서버가 `TempPasswordGenerator`로 생성, 응답(`AdminRegisterResponse.temporaryPassword`)에 평문 1회만 실림. 생성된 비밀번호로 실제 로그인이 되는지(인코딩/디코딩 왕복 확인)
+- [정상] `PATCH /admin/me/password` — 현재 비밀번호 일치 시 변경 성공, 변경 후 RT/AT 모두 무효화(재로그인 필요) 확인
+- [에러] `PATCH /admin/me/password` — 현재 비밀번호 불일치 시 `CURRENT_PASSWORD_MISMATCH`, 비밀번호는 변경되지 않음
+- [경계] 요청 DTO 검증: `newPassword` 8자 미만 → 400
+- **[미구현 — 설계만 있음]** 로그인 실패 5회 시 30분 잠금 — 아직 코드 없음, Redis/DB 중 어느 쪽으로 할지도 미정(DESIGN_NOTES.md §5 참고)
+
+### 3.20 회원 정보 관리(MemberController.updateProfile/MemberProfileUpdateService) — **[3순위·통합, 신규 추가]**
+- [정상] name/email/nickname/phone/address 갱신, 응답에 반영
+- [경계] 본인이 원래 쓰던 닉네임 그대로 재제출 → 중복으로 안 침(온보딩과 동일 패턴)
+- [에러] 다른 사람이 쓰는 닉네임으로 변경 시도 → `DUPLICATE_NICKNAME`
+- [에러] 탈퇴한 회원이 호출 → `MEMBER_ALREADY_WITHDRAWN`
+- [상태] `phone`/`address`를 요청에서 생략(null) → 기존 값 유지, 빈 문자열("")로 보냄 → `null`로 지워짐(PATCH 부분수정 시맨틱 — 이 둘을 구분하는지가 핵심 케이스)
+- [경계] 요청 DTO 검증: `name`/`email`/`nickname` blank/형식 오류/길이초과 → 400
 
 ### 3.18 카카오 연동 — **[2순위]** (웹훅 보안 검증) / **[3순위]** (실제 외부 API 클라이언트)
 - [에러] `app_id` 불일치 → 200 반환하되 탈퇴 처리 안 됨(`event=KAKAO_UNLINK_WEBHOOK_APP_ID_MISMATCH`)
