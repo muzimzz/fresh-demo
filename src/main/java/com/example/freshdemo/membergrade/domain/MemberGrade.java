@@ -24,6 +24,10 @@ import lombok.NoArgsConstructor;
  * Member.memberGradeId가 이 표를 NOT NULL FK로 참조한다 — 신규 회원 생성 시 isDefault=true인
  * 행을 자동으로 찾아 배정한다(CustomOidcUserService 참고). 그래서 이 표엔 최소 1개, isDefault=true인
  * 행이 항상 존재해야 한다 — 없으면 회원가입 자체가 막힌다(DEFAULT_MEMBER_GRADE_NOT_FOUND).
+ *
+ * isDefault=true 행이 "최대 1개"임은 isDefaultKey 생성 컬럼 + UNIQUE로 DB가 강제한다(목표 DDL 그대로,
+ * Address.isDefaultKey와 같은 기법). "최소 1개"는 DB가 못 막는 조건이라(DDL 주석에도 명시) 여전히
+ * DefaultMemberGradeInitializer(기동 시 시드)가 담당한다.
  */
 @Entity
 @Getter
@@ -39,6 +43,14 @@ public class MemberGrade extends LongMutableBaseEntity {
 
     @Column(name = "is_default", nullable = false)
     private boolean isDefault;
+
+    /**
+     * is_default=TRUE인 행이 최대 1개임을 DB가 강제하기 위한 GENERATED 컬럼(목표 DDL 그대로) —
+     * 앱은 이 값을 직접 쓰지 않는다(insertable/updatable=false, Address.isDefaultKey와 동일 패턴).
+     */
+    @Column(name = "is_default_key", insertable = false, updatable = false, unique = true,
+            columnDefinition = "TINYINT GENERATED ALWAYS AS (CASE WHEN is_default THEN 1 ELSE NULL END)")
+    private Integer isDefaultKey;
 
     @Builder
     private MemberGrade(String name, String promotionRule, boolean isDefault) {

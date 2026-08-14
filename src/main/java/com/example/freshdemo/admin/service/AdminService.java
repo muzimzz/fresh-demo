@@ -10,6 +10,8 @@ import com.example.freshdemo.auth.jwt.AuthCookieFactory;
 import com.example.freshdemo.auth.jwt.JwtTokenProvider;
 import com.example.freshdemo.auth.jwt.RefreshTokenRepository;
 import com.example.freshdemo.auth.jwt.TokenType;
+import com.example.freshdemo.common.audit.domain.AuditLog;
+import com.example.freshdemo.common.audit.repository.AuditLogRepository;
 import com.example.freshdemo.common.exception.BusinessException;
 import com.example.freshdemo.common.exception.ErrorCode;
 import jakarta.servlet.http.HttpServletResponse;
@@ -25,8 +27,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 관리자 계정 발급/삭제는 권한 상승/회수로 직결되는 민감한 액션이라, 누가(actorId) 언제 누구를
- * (targetId) 대상으로 했는지 감사 로그(event=ADMIN_*)를 남긴다 — 마스킹 없이 id만 찍는다
- * (DESIGN_NOTES.md 로깅 원칙: 비즈니스 로그는 원칙적으로 id만).
+ * (targetId) 대상으로 했는지 이중으로 남긴다 — 콘솔/JSON 구조화 로그(event=ADMIN_*, id만)와
+ * audit_log 테이블(AuditLog, 목표 DDL 그대로) 둘 다에 기록한다(DESIGN_NOTES.md 로깅 원칙 +
+ * V1__init_schema.sql audit_log 테이블 참고). 로그는 실시간 관찰용, audit_log는 나중에도 조회
+ * 가능한 영속 감사 기록용으로 역할이 다르다.
  */
 @Slf4j
 @Service
@@ -39,6 +43,7 @@ public class AdminService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final AccessTokenValidAfterRepository accessTokenValidAfterRepository;
     private final AuthCookieFactory authCookieFactory;
+    private final AuditLogRepository auditLogRepository;
 
     @Transactional(readOnly = true)
     public Admin login(String loginId, String rawPassword, HttpServletResponse response) {
@@ -113,6 +118,13 @@ public class AdminService {
             log.warn("event=ADMIN_REGISTER_FAILED actorId={} reason=DUPLICATE_LOGIN_ID_RACE", requesterId);
             throw new BusinessException(ErrorCode.DUPLICATE_LOGIN_ID, e);
         }
+
+        auditLogRepository.save(AuditLog.builder()
+                .adminId(requesterId)
+                .action("ADMIN_REGISTER")
+                .target(String.valueOf(created.getId()))
+                .detail("loginId=%s, role=%s".formatted(created.getLoginId(), created.getRole()))
+                .build());
 
         return new AdminRegistrationResult(created, temporaryPassword);
     }
@@ -190,6 +202,13 @@ public class AdminService {
         accessTokenValidAfterRepository.invalidateBefore(
                 targetRole, target.getId(), LocalDateTime.now(),
                 Duration.ofMillis(jwtTokenProvider.getAccessTokenValidityMs()));
+
+        auditLogRepository.save(AuditLog.builder()
+                .adminId(requesterId)
+                .action("ADMIN_DELETE")
+                .target(String.valueOf(targetAdminId))
+                .detail("targetRole=%s".formatted(target.getRole()))
+                .build());
 
         log.info("event=ADMIN_DELETED actorId={} targetId={}", requesterId, targetAdminId);
     }

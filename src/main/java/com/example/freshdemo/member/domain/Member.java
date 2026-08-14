@@ -13,28 +13,53 @@ import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.Check;
 
+/**
+ * 컬럼명/제약은 V1__init_schema.sql(목표 DDL)의 member 테이블을 그대로 따른다 — social_type/
+ * social_type_id였던 예전 컬럼명을 DDL의 provider/provider_user_id로 맞췄고, active_provider_key도
+ * 더 이상 애플리케이션이 직접 값을 넣고 비우는 일반 컬럼이 아니라 deleted_at 기준으로 DB가 계산하는
+ * GENERATED 컬럼이다(Address.isDefaultKey와 같은 기법). status/refresh_token 관련 CHECK 제약도
+ * DDL 그대로 옮겨왔다.
+ *
+ * 주의: 이 프로젝트는 Flyway 없이 ddl-auto:update로 스키마를 관리한다. GENERATED 컬럼·CHECK 제약을
+ * 기존 테이블에 추가하는 ALTER를 Hibernate가 깨끗하게 만들어내는지는 로컬 검증이 필요하다 — 안
+ * 먹으면(컬럼/제약이 안 생기면) member 테이블을 드롭하고 재기동하거나 수동 DDL이 필요하다
+ * (Address 엔티티의 같은 주의사항 참고).
+ */
 @Entity
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Table(name = "member")
+@Check(name = "chk_member_status", constraints = "status IN ('PENDING_PROFILE','ACTIVE','BLOCKED','WITHDRAWN')")
+@Check(name = "chk_member_refresh_token", constraints = "(refresh_token_hash IS NULL AND refresh_token_expires_at IS NULL) "
+        + "OR (refresh_token_hash IS NOT NULL AND refresh_token_expires_at IS NOT NULL)")
+@Check(name = "chk_member_withdrawn", constraints = "(status = 'WITHDRAWN' AND deleted_at IS NOT NULL) "
+        + "OR (status <> 'WITHDRAWN' AND deleted_at IS NULL)")
 public class Member extends LongMutableBaseEntity {
 
+    // 목표 DDL 컬럼명(provider). 예전엔 social_type이었다 — 카카오 말고 다른 인증 제공자가 추가될
+    // 걸 대비한 확장 컬럼이라는 의미가 DDL 코멘트에 명시돼 있다.
     @Enumerated(EnumType.STRING)
-    @Column(name = "social_type", nullable = false, length = 20)
-    private SocialType socialType;
+    @Column(name = "provider", nullable = false, length = 30)
+    private SocialType provider;
 
-    @Column(name = "social_type_id", nullable = false)
-    private String socialTypeId; // 카카오 회원번호(고유 식별자). unlink API의 target_id, 웹훅의 user_id와 매칭되는 값. 유니크 제약 없음(아래 activeProviderKey 참고)
+    // 목표 DDL 컬럼명(provider_user_id, VARCHAR(100)). 카카오 회원번호(OIDC sub, 고유 식별자).
+    // unlink API의 target_id, 웹훅의 user_id와 매칭되는 값. 로그 평문 출력 금지(PiiMasker.maskProviderId
+    // 사용처 참고). 유니크 제약은 이 컬럼 자체가 아니라 activeProviderKey 하나에만 건다.
+    @Column(name = "provider_user_id", nullable = false, length = 100)
+    private String providerUserId;
 
     /**
-     * "{socialType}:{socialTypeId}" 형태의 활성 식별 키. UNIQUE는 이 필드 하나에만 건다 —
-     * social_type_id 자체에는 더 이상 유니크 제약이 없다. 탈퇴 시 이 필드를 null로 비워서
-     * (withdraw() 참고) 같은 소셜 계정으로 재가입할 때 "새 행"을 만들 수 있게 자리를 비켜준다 —
-     * 탈퇴 이력(옛 social_type_id 포함)은 행을 지우지 않고 그대로 남긴 채로.
-     * 조회/생성 양쪽이 항상 buildActiveProviderKey()로 같은 규칙을 쓴다.
+     * "{provider}:{providerUserId}" 형태의 활성 식별 키 — 목표 DDL대로 deleted_at IS NULL을 기준으로
+     * DB가 직접 계산하는 GENERATED 컬럼이다(VIRTUAL, DDL에 STORED 명시 없음). 애플리케이션은 이 값을
+     * 더 이상 직접 쓰지 않는다(insertable/updatable=false) — 탈퇴(withdraw())로 deleted_at이 채워지는
+     * 순간 이 컬럼도 자동으로 NULL이 되어, 같은 카카오 계정으로 재가입할 때 새 행을 만들 수 있게
+     * 자리가 비워진다. 조회는 여전히 buildActiveProviderKey()로 같은 조합 규칙을 써서 검색 키를 만든다.
      */
-    @Column(name = "active_provider_key", unique = true, length = 45)
+    @Column(name = "active_provider_key", insertable = false, updatable = false, unique = true, length = 140,
+            columnDefinition = "VARCHAR(140) GENERATED ALWAYS AS "
+                    + "(CASE WHEN deleted_at IS NULL THEN CONCAT(provider, ':', provider_user_id) ELSE NULL END)")
     private String activeProviderKey;
 
     // 목표 DDL 코멘트는 "카카오 제공 이메일"이지만, 실제로는 카카오에서 받아오지 않기로 했다 —
@@ -45,7 +70,12 @@ public class Member extends LongMutableBaseEntity {
     @Column(length = 255)
     private String email;
 
-    @Column(unique = true, length = 20)
+    // 목표 DDL은 VARCHAR(50)이다(예전엔 20으로 더 좁게 잡혀 있었음 — MemberOnboardingRequest/
+    // MemberProfileUpdateRequest의 @Size(max=20)도 함께 50으로 맞춰야 한다).
+    // unique=true는 DDL엔 없는 애플리케이션 자체 제약이다(중복 닉네임 방지) — 이 프로젝트가 아는
+    // 별도 이슈(existsByNickname 선조회 방식의 동시성 레이스)가 있는 채로 유지 중이며, 이번 라운드의
+    // 수정 대상이 아니다.
+    @Column(unique = true, length = 50)
     private String nickname;
 
     // 목표 DDL의 member.name(폼 입력 실명) — 카카오가 주는 nickname과는 별개 필드다. nickname은
@@ -87,14 +117,17 @@ public class Member extends LongMutableBaseEntity {
     @Column(nullable = false)
     private MemberRole role;
 
+    // 목표 DDL: VARCHAR(30) COLLATE utf8mb4_0900_as_cs. 서버 기본 콜레이션(utf8mb4_0900_ai_ci)은
+    // 대소문자를 구분하지 않아 'pending_profile' 같은 값도 통과시키는데, 애플리케이션은 Enum.valueOf로
+    // 대소문자를 구분해서 읽으므로 DB와 애플리케이션의 판단이 어긋날 수 있다 — DDL 주석의 경고 그대로.
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "VARCHAR(30) COLLATE utf8mb4_0900_as_cs")
     private MemberStatus status;
 
     // 목표 DDL의 member.deleted_at과 이름을 맞췄다(기존 withdrawnAt에서 리네임) — DDL은 이 컬럼과
-    // status='WITHDRAWN'의 짝을 CHECK 제약으로 강제하는데, 여기서는 그 짝 맞추기를 withdraw()
-    // 메서드 하나로만 하고 있다(DB CHECK로 강제하지는 않음 — 이 프로젝트는 Flyway 마이그레이션이
-    // 없어 CHECK 제약을 코드만으로 안전하게 걸기 어렵다).
+    // status='WITHDRAWN'의 짝을 CHECK 제약(chk_member_withdrawn, 클래스 레벨 @Check)으로 강제한다.
+    // withdraw()가 항상 둘을 같이 바꾸므로 정상 경로에서는 위반이 안 나지만, 이 CHECK가 실수로 한쪽만
+    // 바꾸는 코드(예: 나중에 누가 deletedAt만 세터로 직접 건드리는 경우)에 대한 DB 레벨 마지막 방어선이다.
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
@@ -103,17 +136,19 @@ public class Member extends LongMutableBaseEntity {
     // 따라 이 회원 행 자체에 합쳤다. RefreshTokenRepository만 이 두 컬럼을 직접 건드린다(항상 같이
     // 쓰고 같이 비움 — DDL의 chk_member_refresh_token과 같은 "둘 다 있거나 둘 다 없거나" 불변식을
     // 코드로만 지킨다). 값은 항상 SHA-256 해시고 원문은 절대 안 남는다(TokenHasher 참고).
-    @Column(name = "refresh_token_hash", length = 64)
+    // 목표 DDL은 CHAR(64)(해시가 항상 정확히 64자 hex라 고정길이) — 예전엔 VARCHAR(64)였다.
+    @Column(name = "refresh_token_hash", columnDefinition = "CHAR(64)")
     private String refreshTokenHash;
 
     @Column(name = "refresh_token_expires_at")
     private LocalDateTime refreshTokenExpiresAt;
 
     @Builder
-    private Member(SocialType socialType, String socialTypeId, MemberRole role, Long memberGradeId) {
-        this.socialType = socialType;
-        this.socialTypeId = socialTypeId;
-        this.activeProviderKey = buildActiveProviderKey(socialType, socialTypeId);
+    private Member(SocialType provider, String providerUserId, MemberRole role, Long memberGradeId) {
+        this.provider = provider;
+        this.providerUserId = providerUserId;
+        // activeProviderKey는 더 이상 여기서 대입하지 않는다 — DB가 GENERATED 컬럼으로 계산한다
+        // (deleted_at이 아직 없는 신규 행이므로 저장 즉시 "{provider}:{providerUserId}"로 채워진다).
         this.role = (role != null) ? role : MemberRole.ROLE_USER;
         this.memberGradeId = Objects.requireNonNull(memberGradeId, "memberGradeId");
         // 카카오 최초 로그인 시점엔 sub(식별자) 말고 아무 프로필 정보도 안 받는다 — email도 이제
@@ -122,9 +157,15 @@ public class Member extends LongMutableBaseEntity {
         this.status = MemberStatus.PENDING_PROFILE;
     }
 
-    /** activeProviderKey 조합 규칙을 엔티티/조회 로직이 공유하기 위한 단일 지점. */
-    public static String buildActiveProviderKey(SocialType socialType, String socialTypeId) {
-        return socialType.name() + ":" + socialTypeId;
+    /**
+     * activeProviderKey 조합 규칙 — DB의 GENERATED 컬럼 계산식(CONCAT(provider, ':', provider_user_id))과
+     * 반드시 같은 규칙을 유지해야 한다. 엔티티 자체는 이 값을 더 이상 저장하지 않지만(DB가 계산),
+     * "이 provider/providerUserId 조합으로 활성 회원을 찾는다"는 조회 조건을 만들 때 애플리케이션이
+     * 여전히 이 조합 규칙을 알아야 하므로 정적 메서드로 남겨둔다(MemberRepository.findByActiveProviderKey
+     * 호출부 참고).
+     */
+    public static String buildActiveProviderKey(SocialType provider, String providerUserId) {
+        return provider.name() + ":" + providerUserId;
     }
 
     public Member assignNickname(String nickname) {
@@ -196,17 +237,17 @@ public class Member extends LongMutableBaseEntity {
         }
         this.status = MemberStatus.WITHDRAWN;
         this.deletedAt = LocalDateTime.now();
-        // 같은 소셜 계정으로 재가입할 수 있게 활성 키를 비워준다. social_type/social_type_id
-        // 자체는 탈퇴 이력 조회를 위해 그대로 남겨두되, 이후 재가입은 이 행을 재활성화하는 게 아니라
-        // 새 행을 만드는 방식으로 처리한다(CustomOidcUserService 참고.
-        this.activeProviderKey = null;
+        // activeProviderKey를 더 이상 여기서 직접 비우지 않는다 — GENERATED 컬럼이라 deleted_at을
+        // 채운 시점에 DB가 자동으로 NULL로 재계산한다. provider/providerUserId 자체는 탈퇴 이력
+        // 조회를 위해 그대로 남겨두고, 이후 재가입은 이 행을 재활성화하는 게 아니라 새 행을 만드는
+        // 방식으로 처리한다(CustomOidcUserService 참고).
     }
 
     /**
      * 실수로 엔티티를 통째로 log.info(member)/log.debug(member)처럼 찍어도 email/phone/address/
-     * socialTypeId 같은 민감정보가 그대로 새어나가지 않도록 방어적으로 오버라이드한다. email은
+     * providerUserId 같은 민감정보가 그대로 새어나가지 않도록 방어적으로 오버라이드한다. email은
      * 완전히 빼는 대신 PiiMasker로 부분 마스킹만 해서 남긴다 — 그래도 디버깅할 땐 어떤 계정인지
-     * 어느 정도 식별은 돼야 하니까. phone/address/socialTypeId/activeProviderKey는 아예 안 남긴다.
+     * 어느 정도 식별은 돼야 하니까. phone/address/providerUserId/activeProviderKey는 아예 안 남긴다.
      */
     @Override
     public String toString() {

@@ -33,7 +33,7 @@ public class KakaoUnlinkClient {
     private String adminKey;
 
     /**
-     * @param kakaoUserId Member.socialTypeId (카카오 회원번호)
+     * @param kakaoUserId Member.providerUserId (카카오 회원번호)
      */
     public void unlink(String kakaoUserId) {
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();

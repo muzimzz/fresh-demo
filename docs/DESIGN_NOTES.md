@@ -116,7 +116,59 @@
 - 운영 전환 체크리스트: `JWT_SECRET` 관리 방식(시크릿 매니저 도입 여부) — 지금은 Redis 이중화 대신 `member`/`admin` 컬럼 기반 DB write-through+폴백으로 장애 대비를 해결하기로 결정 완료(1번 항목 참고). (`jwt.cookie.secure`는 `application-local.yaml`/`application-prod.yaml` 프로필 분리로 이미 반영됨 — 배포 시 `SPRING_PROFILES_ACTIVE=prod` 지정 필요.)
 - ✅ `Address`의 기본 배송지 강제 — 서비스 레이어 로직은 유지하면서, 목표 DDL과 같은 generated column(`is_default_key`) + UNIQUE를 추가로 걸어 DB 레벨 안전망을 얹었다. 다만 이 프로젝트는 Flyway가 없어(ddl-auto:update) 기존 테이블에 생성 컬럼을 추가하는 ALTER가 실제로 깨끗하게 먹히는지는 로컬에서 검증이 필요하다 — 안 먹으면 테이블을 드롭하고 재기동하거나 수동 ALTER TABLE이 필요하다(`Address` Javadoc 참고).
 - ✅→해결 `RefreshTokenBackup` 테이블의 row 증가/정리 문제 — 별도 테이블을 없애고 `member`/`admin`의 컬럼으로 옮기면서 자연히 해소됐다(정리할 별도 row 자체가 없어짐).
-- 관리자 액션 감사 로그를 지금의 콘솔/JSON 로그 라인 수준이 아니라 별도 감사 테이블(누가 조회해도 위변조 어려운 append-only 저장소)로 옮길지 — 지금은 `logback-spring.xml`이 찍는 로그가 사실상 유일한 기록.
+- ✅→해결 관리자 액션 감사 로그를 별도 감사 테이블로 옮기는 문제 — `V1__init_schema.sql`의 `audit_log` 테이블을 그대로 반영해 해결(11번 항목 참고). 콘솔/JSON 로그는 대체되지 않고 그대로 유지(역할이 다름).
 - `AccessTokenValidAfterRepository`의 fail-open 정책 재검토 — 지금은 Redis 장애 시 이 방어선을 그냥 건너뛰는데, 실서비스 규모에서 Redis 가용성이 충분히 보장되면(다중화 등) fail-closed로 바꾸는 게 나을 수도 있음. 비밀번호 변경/회원 차단 기능이 생기면 그 시점에도 `invalidateBefore()`를 호출하는 코드를 추가해야 함(지금은 훅만 없고 호출부는 없음).
 - `HttpBodyLoggingFilter`의 `PHONE_PATTERN`은 국내 휴대폰 번호 형식만 커버 — 해외 진출 시 국제전화번호 형식도 같이 잡게 확장 필요.
 - `ExternalApiLoggingExchangeFilter`가 URL을 그대로 로그에 남김 — 지금 쓰는 카카오 API는 쿼리 파라미터에 민감정보가 없어서 괜찮지만, 나중에 쿼리 파라미터에 토큰/키가 실리는 외부 API(일부 결제 API 등)를 추가하면 URL 마스킹을 추가해야 함.
+
+## 11. 스키마 정합화 — V1__init_schema.sql(실제 목표 DDL) 반영
+
+팀 공통 DDL(Flyway 마이그레이션 파일 `V1__init_schema.sql`)을 실제로 전달받아, 회원/관리자/배송지/
+회원등급 범위(`member`, `admin`, `address`, `member_grade`)만 이 DDL과 대조해 반영했다. 상품/주문/
+쿠폰 등 다른 도메인 테이블은 이번 범위 밖(각 담당자가 자기 도메인에서 반영).
+
+- ✅ `Member` 컬럼명을 DDL과 일치시켰다 — `social_type`/`social_type_id` → `provider`/`provider_user_id`
+  (Java 필드명도 함께 변경, `OAuthAttributes`/`CustomOidcUserService`/`AuthController`/
+  `MemberWithdrawalService`/`KakaoLogoutClient`/`KakaoUnlinkClient` 전부 갱신). `provider_user_id`
+  길이도 45 → 100으로 늘렸다(카카오 sub가 최대 100자까지 허용되는데 45자로는 잘릴 위험이 있었음 —
+  실사용 값 길이상 지금까지 문제가 안 됐을 뿐인 잠재 버그였다).
+- ✅ `Member.activeProviderKey`를 애플리케이션이 직접 값을 넣고 비우던 일반 컬럼에서 DDL대로
+  `deleted_at IS NULL` 기준의 DB `GENERATED` 컬럼으로 전환했다(`Address.isDefaultKey`와 동일 기법).
+  `withdraw()`가 더 이상 이 필드를 직접 비우지 않고, `deletedAt`을 채우는 순간 DB가 자동으로
+  재계산한다.
+- ✅ `Member.nickname` 길이를 DDL(`VARCHAR(50)`)에 맞춰 20 → 50으로 늘렸다(`MemberOnboardingRequest`/
+  `MemberProfileUpdateRequest`의 `@Size(max=20)`도 50으로 함께 수정). `unique=true`는 DDL엔 없는
+  애플리케이션 자체 제약으로 그대로 유지 — 동시성 레이스 이슈는 알려진 채로 이번 라운드 수정 대상이
+  아니다(테스트 스위트 백업 유실로 회귀 테스트도 아직 없음).
+- ✅ `member.status`/`admin.role`/`admin.status`에 DDL이 요구하는 `COLLATE utf8mb4_0900_as_cs`를
+  `columnDefinition`으로 추가했다 — 서버 기본 콜레이션(대소문자 미구분)이면 `Enum.valueOf`와 DB의
+  판단이 어긋날 수 있다는 DDL 코멘트의 경고를 반영.
+- ✅ `member.refresh_token_hash`/`admin.refresh_token_hash`를 `VARCHAR(64)`에서 DDL대로 `CHAR(64)`로
+  바꿨다.
+- ✅ `chk_member_status`/`chk_member_refresh_token`/`chk_member_withdrawn`,
+  `chk_admin_role`/`chk_admin_status`/`chk_admin_deleted`/`chk_admin_refresh_token` — DDL의 CHECK
+  제약을 Hibernate `@Check`로 옮겼다. 예전엔 "Flyway가 없어 코드만으로 지킨다"고 문서화돼 있었는데,
+  이제 애플리케이션 로직(정상 경로)에 더해 DB 레벨 마지막 방어선도 생겼다.
+- ✅ `MemberGrade`에 `is_default_key` 생성 컬럼 + UNIQUE를 추가해 "기본 등급 최대 1개"를 DB가
+  강제하게 했다(`Address`엔 이미 있었는데 `MemberGrade`만 빠져 있던 안전장치).
+- ✅ `Address.detailAddress`를 `nullable=false`에서 DDL대로 `nullable=true`로 고쳤다 — `AddressRequest`가
+  선택 필드로 취급하는 것과 어긋나 있던 실제 버그(상세주소 없이 등록하면 NOT NULL 위반 가능성)였다.
+- ✅ `audit_log` 테이블(`AuditLog`/`AuditLogRepository`, `common.audit` 패키지)을 새로 반영했다.
+  상품/주문 등 다른 도메인 액션도 같이 쌓는 공용 테이블이라 도메인 패키지가 아니라 `common` 아래에
+  뒀고, 이번 범위에서는 `AdminService.register()`/`deleteAdmin()`(관리자 등록/삭제) 두 액션만
+  `action=ADMIN_REGISTER`/`ADMIN_DELETE`로 기록한다. 콘솔/JSON 로그(`event=ADMIN_REGISTERED` 등)는
+  대체하지 않고 그대로 유지 — 실시간 관찰용과 영속 감사 기록용으로 역할이 다르다. 다른 도메인
+  액션(`PRODUCT_DELETE` 등)은 해당 도메인이 생길 때 같은 테이블/엔티티를 재사용하면 된다.
+- ✅ 죽은 코드 정리 — `ErrorCode.KAKAO_WEBHOOK_INVALID` 제거(카카오 웹훅은 검증 실패 시에도 항상
+  200을 줘야 해서 애초에 쓰일 수 없었던 코드), `docs/API.md` 삭제(최신 코드와 어긋난 채 방치돼 있었고
+  — PK가 Long인데 `uuid`로 표기, `PATCH /admin/me/password` 누락 등 — 지금 시점엔 불필요 판단).
+- ⬜ 관리자 로그인 5회 실패 시 30분 잠금 — 요구사항 예외사항의 일부지만 이번 라운드는 보류(5번 항목
+  결론 그대로 미해결).
+- ⬜ `Member.nickname` 유니크 제약의 동시성 레이스(`existsByNickname` 선조회 방식) — 알려진 이슈,
+  이번 라운드 수정 대상 아님. `AdminService.register()`는 이미 `saveAndFlush()` +
+  `DataIntegrityViolationException` catch로 이 패턴을 올바르게 처리하고 있어 참고할 선례가 있다.
+- 이번 세션은 이 SQL 파일을 대상으로 gradle 컴파일 검증을 하지 못했다 — 샌드박스가 JDK 11만
+  갖고 있고(`build.gradle`은 JDK 21 요구) Gradle 배포판 다운로드도 네트워크가 막혀 있었다. 코드는
+  grep 기반으로 이전 필드명(`socialType`/`socialTypeId`) 잔존 여부를 전수 확인했지만, 실제 컴파일·
+  `ddl-auto:update`가 기존 테이블에 이 변경들(특히 GENERATED 컬럼·CHECK 제약)을 깨끗하게 반영하는지는
+  로컬에서 별도 검증이 필요하다.

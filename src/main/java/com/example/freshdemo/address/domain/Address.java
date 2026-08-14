@@ -46,7 +46,10 @@ public class Address extends LongMutableBaseEntity {
     @Column(name = "road_address", nullable = false, length = 255)
     private String roadAddress;
 
-    @Column(name = "detail_address", nullable = false, length = 255)
+    // 목표 DDL은 NULL 허용(선택 항목)이다 — AddressRequest.detailAddress도 검증 애너테이션 없이
+    // 선택으로 취급하는데, 예전엔 이 컬럼이 nullable=false라 상세주소 없이 등록하면 NOT NULL 위반이
+    // 날 수 있는 버그였다.
+    @Column(name = "detail_address", length = 255)
     private String detailAddress;
 
     @Column(name = "is_default", nullable = false)

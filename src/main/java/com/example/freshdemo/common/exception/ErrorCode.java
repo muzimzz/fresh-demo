@@ -26,7 +26,9 @@ public enum ErrorCode implements ResponseCode {
     DUPLICATE_NICKNAME(HttpStatus.CONFLICT, "이미 사용 중인 닉네임입니다."),
 
     KAKAO_UNLINK_FAILED(HttpStatus.BAD_GATEWAY, "카카오 연결 해제 요청에 실패했습니다."),
-    KAKAO_WEBHOOK_INVALID(HttpStatus.BAD_REQUEST, "유효하지 않은 카카오 웹훅 요청입니다."),
+    // KAKAO_WEBHOOK_INVALID는 제거했다 — 카카오 웹훅은 검증 실패 시에도 항상 200을 줘야 하는 스펙이라
+    // (KakaoUnlinkWebhookController 참고) BusinessException으로 400을 던지는 이 코드는 애초에 쓰일 수
+    // 없는 죽은 코드였다. 검증 실패는 log.warn만 남기고 200을 반환하는 현재 방식이 맞다.
 
     // 관리자(Admin) — fm-backend(freshmarket) 스펙 참고
     ADMIN_NOT_FOUND(HttpStatus.BAD_REQUEST, "관리자를 찾을 수 없습니다."),

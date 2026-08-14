@@ -18,7 +18,7 @@ import jakarta.validation.constraints.Size;
 public record MemberProfileUpdateRequest(
         @NotBlank @Size(max = 50) String name,
         @NotBlank @Email @Size(max = 255) String email,
-        @NotBlank @Size(max = 20) String nickname,
+        @NotBlank @Size(max = 50) String nickname, // Member.nickname 목표 DDL 길이(VARCHAR(50))에 맞춤
         @Size(max = 20) String phone,
         @Size(max = 255) String address
 ) {

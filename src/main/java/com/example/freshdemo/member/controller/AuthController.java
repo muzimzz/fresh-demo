@@ -140,7 +140,7 @@ public class AuthController {
         // 실패해도 우리 서비스 로그아웃 자체는 이미 끝난 뒤라 응답에 영향 없다(KakaoLogoutClient 내부에서 흡수).
         if (userDetails.getType() == TokenType.MEMBER) {
             memberRepository.findById(userDetails.getId())
-                    .ifPresent(member -> kakaoLogoutClient.logout(member.getSocialTypeId()));
+                    .ifPresent(member -> kakaoLogoutClient.logout(member.getProviderUserId()));
         }
 
         response.addHeader(HttpHeaders.SET_COOKIE, authCookieFactory.expiredAccessTokenCookie().toString());

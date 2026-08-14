@@ -41,9 +41,9 @@ public class CustomOidcUserService extends OidcUserService {
 
         String registrationId = userRequest.getClientRegistration().getRegistrationId();
 
-        SocialType socialType;
+        SocialType provider;
         try {
-            socialType = SocialType.valueOf(registrationId.toUpperCase());
+            provider = SocialType.valueOf(registrationId.toUpperCase());
         } catch (IllegalArgumentException e) {
             log.warn("event=MEMBER_LOGIN_FAILED reason=UNSUPPORTED_REGISTRATION_ID registrationId={}", registrationId);
             throw new OAuth2AuthenticationException("지원하지 않는 소셜 로그인, [registrationId]: " + registrationId);
@@ -52,9 +52,9 @@ public class CustomOidcUserService extends OidcUserService {
         String userNameAttributeName = userRequest.getClientRegistration()
                 .getProviderDetails().getUserInfoEndpoint().getUserNameAttributeName();
 
-        OAuthAttributes attrs = OAuthAttributes.of(socialType, userNameAttributeName, oidcUser.getAttributes());
+        OAuthAttributes attrs = OAuthAttributes.of(provider, userNameAttributeName, oidcUser.getAttributes());
 
-        String activeProviderKey = Member.buildActiveProviderKey(attrs.socialType(), attrs.socialTypeId());
+        String activeProviderKey = Member.buildActiveProviderKey(attrs.provider(), attrs.providerUserId());
         Optional<Member> optionalMember = memberRepository.findByActiveProviderKey(activeProviderKey);
 
         Member member;
@@ -81,7 +81,7 @@ public class CustomOidcUserService extends OidcUserService {
             } catch (DataIntegrityViolationException e) {
                 member = memberRepository.findByActiveProviderKey(activeProviderKey)
                         .orElseThrow(() -> {
-                            log.warn("event=MEMBER_LOGIN_FAILED reason=SIGNUP_RACE_UNRESOLVED socialType={}", socialType);
+                            log.warn("event=MEMBER_LOGIN_FAILED reason=SIGNUP_RACE_UNRESOLVED provider={}", provider);
                             return e;
                         });
             }

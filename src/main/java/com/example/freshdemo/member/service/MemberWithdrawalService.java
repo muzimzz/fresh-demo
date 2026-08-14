@@ -47,7 +47,7 @@ public class MemberWithdrawalService {
         // TODO(주문 도메인 추가 시): 진행 중 주문/미완료 환불이 있으면 여기서 막아야 한다(Member.withdraw() 참고).
         // 지금은 order 모듈이 없는 인증 데모 범위라 체크 없이 바로 진행한다.
 
-        String kakaoUserId = member.getSocialTypeId();
+        String kakaoUserId = member.getProviderUserId();
 
         member.withdraw();
 
