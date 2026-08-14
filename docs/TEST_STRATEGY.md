@@ -191,6 +191,10 @@ PK 타입과 무관하게 동일하다.)
 ### 3.13 JwtAccessDeniedHandler / JwtAuthenticationEntryPoint — **[1순위·단위]** (mock request/response)
 - [정상] 403/401 JSON 바디가 각각 `ErrorCode.FORBIDDEN`/`UNAUTHORIZED` 포맷과 일치
 
+(덧붙임: 이 둘은 이후 `member.oauth.error`에서 `auth.jwt`로 패키지 이동됨 — `SecurityConfig`의 전역
+`exceptionHandling`에 등록돼서 member/admin 요청 공용으로 쓰이는데, 옛 위치가 "member 로그인 전용"처럼
+보여서 다른 JWT 인프라(`JwtAuthenticationFilter` 등)와 같은 패키지로 옮겼다. 동작 변화는 없음.)
+
 ### 3.14 회원 온보딩(MemberOnboardingService) — **[3순위·통합]**
 - [정상] 온보딩 완료 후 이름/이메일/닉네임/약관동의/마케팅동의 반영, `PENDING_PROFILE`→`ACTIVE`
 - [상태] 이미 `ACTIVE`인 회원이 재호출(정보 변경) — 상태 전이는 없고 값만 갱신됨(에러 아님)
@@ -255,6 +259,35 @@ PK 타입과 무관하게 동일하다.)
 ### 3.19 스케줄러 & 외부 API 공통 로깅 — **[2순위·통합, 현재 스케줄러 없음]**
 - [정상] `SchedulerLoggingAspect`: 정상 종료 시 `SCHEDULER_START`/`SCHEDULER_END`(durationMs), 예외 시 `SCHEDULER_FAILED` + 예외 그대로 재던짐 — **테스트하려면 `@Scheduled` 더미 빈을 하나 만들어야 함**, 지금은 프로젝트에 `@Scheduled` 메서드가 하나도 없다(`RefreshTokenCleanupScheduler` 삭제 이후). 이 Aspect 자체는 향후 대비로 유지 중이라 테스트 우선순위는 낮음.
 - [정상] `ExternalApiLoggingExchangeFilter`: 성공/실패 각각 `EXTERNAL_API_CALL`/`EXTERNAL_API_CALL_FAILED`에 method/url/status/durationMs
+
+(덧붙임: `MdcLoggingFilter`/`TraceIdExchangeFilter`/`ExternalApiLoggingExchangeFilter`는 이후
+`common.filter`에서 `common.logging`으로 통합 이동됨 — `common.filter`엔 이 셋만, `common.logging`엔
+`HttpBodyLoggingFilter`/`PiiMasker`/`SchedulerLoggingAspect`가 있어서 "필터냐 로깅이냐" 기준이 섞여
+있던 걸 "전부 로깅 인프라"라는 하나의 기준으로 통일했다. 동작 변화는 없음.)
+
+### 3.21 로컬 콘솔 로그 포맷(logback-spring.xml) — **[2순위·통합, 신규 추가]**
+이번 세션에서 실제로 겪은 버그 — 로컬 콘솔 로그가 전부 한 줄에 붙어서 출력되는 증상이 있었다.
+원인 두 가지가 겹쳐 있었다:
+1. `local` 프로필 패턴에서 `%cyan(%logger{36})` 바로 뒤에 리터럴 괄호 `(%F:%line)`가 이어지면서,
+   Logback의 PatternParser가 그 여는 괄호를 또 다른 컴포지트 컨버터(`%word(...)`)의 시작으로 오인 —
+   `- %msg%n` 전체가 파싱 실패로 통째로 사라졌다. IntelliJ 콘솔 렌더링 문제로 의심했었으나,
+   `--console=plain`으로 raw 파일에 직접 캡처해서 실제로 로그 자체가 깨져 있다는 걸 확인했다(개행이
+   없는 게 아니라 " - %msg%n" 부분 자체가 아예 안 찍히고 있었음).
+2. `%X{traceId:-}`처럼 `%X{}`(MDC 컨버터) 안에 `:-` 기본값 문법을 썼는데, 이건 Logback도 Log4j2도
+   `%X{}` 자체에서는 지원하지 않는 문법이다(Log4j2에 `:-`가 있긴 하지만 그건 `%X{}`가 아니라
+   `${ctx:key:-default}` 같은 완전히 다른 Lookup 치환 문법). `"traceId:-"`라는 존재하지 않는 키를
+   찾은 셈이라 traceId/method/uri/clientIp가 항상 빈 문자열로 찍히고 있었다.
+
+리터럴 괄호 제거 + `%X{traceId:-}` → `%X{traceId}` 교정으로 해결.
+
+- [정상] `local` 프로필 콘솔 출력이 로그 이벤트마다 정상적으로 줄바꿈되는지 — 자동화 단위테스트보단
+  부팅 후 콘솔을 육안으로 확인하는 게 현실적이다. 굳이 자동화하려면 Logback `ListAppender`를 테스트에
+  붙여서, 포맷된 문자열 안에 `%n`에 해당하는 개행이 실제로 들어가는지 assert하는 방법이 있다.
+- [정상] MDC에 실제 값이 채워진 요청(`MdcLoggingFilter` 통과 후)은 콘솔 로그의 `[traceId]`/`method`/
+  `uri`/`clientIp` 자리에도 그 값이 그대로 찍히는지 — 이전엔 항상 빈 값이었던 것에 대한 회귀 확인
+- [경계] MDC 값이 없는 로그(요청 컨텍스트 밖 — 부팅 로그 등)에서도 패턴이 깨지지 않고 정상 출력되는지
+- `prod` 프로필(JSON/`LogstashEncoder`)은 이 버그의 영향을 받지 않았다 — 문제였던 리터럴 괄호가
+  `local` 프로필 패턴에만 있었기 때문에 재확인 불필요.
 
 ---
 
@@ -327,10 +360,11 @@ DB(MySQL)와 Redis는 우리가 소유하고 통제하는 "관리 의존성"이�
 | 순위 | 포함 항목 |
 |---|---|
 | 1순위 | 3.1(JwtTokenProvider 단위) · 3.2 · 3.3 · 3.6(필터 단위) · 3.10(마스킹 단위) · 3.11 · 3.13 |
-| 2순위 | 2번(권한 매트릭스) · 3.4 · 3.5 · 3.7 · 3.8(GlobalExceptionHandler, 신규) · 3.9 · 3.10(HTTP 로그 통합) · 3.12 · 3.17 · 3.18(웹훅 보안 검증) · 3.19 · 4번(DB 불변식 — Admin/Member 유니크 레이스) |
+| 2순위 | 2번(권한 매트릭스) · 3.4 · 3.5 · 3.7 · 3.8(GlobalExceptionHandler, 신규) · 3.9 · 3.10(HTTP 로그 통합) · 3.12 · 3.17 · 3.18(웹훅 보안 검증) · 3.19 · 3.21(로컬 콘솔 로그 포맷, 신규) · 4번(DB 불변식 — Admin/Member 유니크 레이스) |
 | 3순위 | 3.14 · 3.15 · 3.16 · 3.18(카카오 클라이언트) |
 | 테스트 아님(체크리스트) | 5번 전체 |
 
 이전 버전보다 늘어난 항목: `GlobalExceptionHandler`(3.8, 완전히 빠져 있었음), 권한 매트릭스의
 admin→member 엔드포인트 접근 문제(2번), DB 유니크 제약 레이스 3건(4번), RT재발급/탈퇴 크로스플로우
-레이스(5번), 온보딩의 예외 분기 3개(3.14, 이전 세션에서 사용자가 직접 지적).
+레이스(5번), 온보딩의 예외 분기 3개(3.14, 이전 세션에서 사용자가 직접 지적), 로컬 콘솔 로그 포맷이
+깨지던 실제 버그와 그 회귀 테스트(3.21, 이번 세션에서 직접 겪고 고침).
