@@ -1,7 +1,7 @@
 package com.example.freshdemo.config;
 
-import com.example.freshdemo.common.filter.ExternalApiLoggingExchangeFilter;
-import com.example.freshdemo.common.filter.TraceIdExchangeFilter;
+import com.example.freshdemo.common.logging.ExternalApiLoggingExchangeFilter;
+import com.example.freshdemo.common.logging.TraceIdExchangeFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.reactive.function.client.WebClient;

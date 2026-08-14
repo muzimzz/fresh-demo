@@ -1,4 +1,4 @@
-package com.example.freshdemo.common.filter;
+package com.example.freshdemo.common.logging;
 
 import java.time.Duration;
 import java.time.Instant;

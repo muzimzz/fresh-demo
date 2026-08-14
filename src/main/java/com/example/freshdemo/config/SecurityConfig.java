@@ -1,13 +1,13 @@
 package com.example.freshdemo.config;
 
 import com.example.freshdemo.auth.jwt.AccessTokenValidAfterRepository;
+import com.example.freshdemo.auth.jwt.JwtAccessDeniedHandler;
+import com.example.freshdemo.auth.jwt.JwtAuthenticationEntryPoint;
 import com.example.freshdemo.auth.jwt.JwtAuthenticationFilter;
 import com.example.freshdemo.auth.jwt.JwtTokenProvider;
 import com.example.freshdemo.auth.jwt.RememberMeRequestFilter;
 import com.example.freshdemo.member.oauth.OAuth2LoginFailureHandler;
 import com.example.freshdemo.member.oauth.OAuth2LoginSuccessHandler;
-import com.example.freshdemo.member.oauth.error.JwtAccessDeniedHandler;
-import com.example.freshdemo.member.oauth.error.JwtAuthenticationEntryPoint;
 import com.example.freshdemo.member.oauth.oidc.CustomOidcUserService;
 import jakarta.servlet.DispatcherType;
 import lombok.RequiredArgsConstructor;

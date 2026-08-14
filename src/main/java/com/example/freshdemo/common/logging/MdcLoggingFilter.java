@@ -1,4 +1,4 @@
-package com.example.freshdemo.common.filter;
+package com.example.freshdemo.common.logging;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
