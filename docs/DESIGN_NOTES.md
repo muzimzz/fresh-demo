@@ -402,6 +402,15 @@ Redis 유틸이 됐다는 설계)만 반영하면 된다 — 관리자 인증을
   배포판을 못 받음, §13과 동일한 사유) — grep으로 (1) 삭제된 클래스(`AuthController`,
   `MemberAuthApi`/`AdminAuthApi`/`~Info`/`~Impl`) 잔존 참조 없음, (2) `common` 패키지 전체에
   `member.*`/`admin.*` import 없음, (3) `RefreshTokenRepository`의 새 시그니처(`role, id, ...`,
-  `TokenType` 파라미터 없음)를 호출부 전부가 따르고 있음을 확인했다. **로컬에서
-  `./gradlew test`를 꼭 다시 돌려서 `서비스_이름`/`순환_의존이_없다`/`contextLoads()` 전부
-  통과하는지 확인할 것.**
+  `TokenType` 파라미터 없음)를 호출부 전부가 따르고 있음을 확인했다. 실제로 로컬에서
+  `./gradlew test`를 돌려 `서비스_이름`/`순환_의존이_없다`/`contextLoads()` 12개 전부 통과 확인함.
+
+### 14.3 실제 카카오 로그인 테스트 중 발견한 후속 버그 — refreshToken 쿠키 path
+
+`AuthCookieFactory.refreshTokenCookie()`/`expiredRefreshTokenCookie()`가 `path("/api/auth")`로
+고정돼 있었는데, 이건 §14에서 지운 `common.auth.AuthController`(`/api/auth/**`) 시절 값이
+그대로 남은 것이었다 — 그 경로 자체가 이제 존재하지 않아서, 브라우저가 실제 엔드포인트인
+`/api/members/reissue`·`/api/admin/reissue`로 refreshToken 쿠키를 자동으로 안 실어 보내는
+문제였다. `path("/api")`로 넓혀서 고쳤다(이 앱은 `server.servlet.context-path=/api`라 사실상
+accessToken의 `path("/")`와 스코프가 비슷해졌지만, 이름 그대로 "인증 관련 요청에만 보낸다"는
+의도는 유지). §14 작업의 연장선이라 별도 라운드로 안 나누고 여기 기록.

@@ -12,6 +12,11 @@ import org.springframework.stereotype.Component;
  * 공유한다(한 브라우저에서 회원/관리자 로그인 동시 유지 불가 — 감수하기로 한 단순화).
  * [LG-fm 컨벤션 리팩토링] common.auth로 이동, 로직 무변경(context-path=/api 유지라 refreshToken
  * 쿠키 path도 "/api/auth" 그대로).
+ * [LG-fm 컨벤션 리팩토링 3차] common.auth.AuthController(`/api/auth/**`)가 회원/관리자용
+ * 컨트롤러로 쪼개지면서 그 경로 자체가 없어졌다 — refreshToken 쿠키 path를 "/api/auth" ->
+ * "/api"로 넓혀서 `/api/members/reissue`·`/api/admin/reissue` 양쪽 다 브라우저가 쿠키를 자동으로
+ * 실어 보내도록 고쳤다(이 앱은 server.servlet.context-path=/api라 실질적으로 accessToken의
+ * path="/"와 스코프가 거의 같아졌지만, 이름 그대로 "인증 관련 요청에만" 보낸다는 의도는 유지).
  */
 @Component
 @RequiredArgsConstructor
@@ -38,7 +43,7 @@ public class AuthCookieFactory {
         ResponseCookie.ResponseCookieBuilder builder = ResponseCookie.from("refreshToken", refreshToken)
                 .httpOnly(true)
                 .secure(secure)
-                .path("/api/auth")
+                .path("/api")
                 .sameSite("Lax");
         if (persistent) {
             builder.maxAge(Duration.ofMillis(jwtTokenProvider.getRefreshTokenValidityMs()));
@@ -60,7 +65,7 @@ public class AuthCookieFactory {
         return ResponseCookie.from("refreshToken", "")
                 .httpOnly(true)
                 .secure(secure)
-                .path("/api/auth")
+                .path("/api")
                 .maxAge(Duration.ZERO)
                 .sameSite("Lax")
                 .build();
