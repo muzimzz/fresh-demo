@@ -1,12 +1,8 @@
 package com.example.freshdemo.member.domain.oauth;
 
-import com.example.freshdemo.common.auth.AuthCookieFactory;
-import com.example.freshdemo.common.auth.jwt.JwtTokenProvider;
-import com.example.freshdemo.common.auth.jwt.RefreshTokenRepository;
 import com.example.freshdemo.common.auth.jwt.RememberMeRequestFilter;
-import com.example.freshdemo.common.auth.jwt.TokenType;
 import com.example.freshdemo.member.domain.entity.Member;
-import com.example.freshdemo.member.domain.entity.MemberRole;
+import com.example.freshdemo.member.domain.service.MemberTokenService;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
@@ -22,13 +18,15 @@ import org.springframework.security.web.authentication.AuthenticationSuccessHand
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.UriComponentsBuilder;
 
+/**
+ * [LG-fm 컨벤션 리팩토링 3차] 순환_의존이_없다 대응: JwtTokenProvider/RefreshTokenRepository
+ * 직접 호출을 MemberTokenService.issue()로 옮겼다. 로직 자체는 무변경.
+ */
 @Component
 @RequiredArgsConstructor
 public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
 
-    private final JwtTokenProvider jwtTokenProvider;
-    private final RefreshTokenRepository refreshTokenRepository;
-    private final AuthCookieFactory authCookieFactory;
+    private final MemberTokenService memberTokenService;
 
     @Value("${app.frontend.callback-url}")
     private String frontendCallbackUrl;
@@ -44,17 +42,8 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
         Member member = oidcUser.getMember();
         boolean rememberMe = resolveRememberMe(request);
 
-        Long memberId = member.getId();
-        MemberRole memberRole = member.getRole();
-        String role = memberRole.name();
+        memberTokenService.issue(member, rememberMe, response);
 
-        String accessToken = jwtTokenProvider.createAccessToken(memberId, TokenType.MEMBER, role);
-        String refreshToken = jwtTokenProvider.createRefreshToken(memberId, TokenType.MEMBER, role, rememberMe);
-
-        refreshTokenRepository.save(TokenType.MEMBER, role, memberId, refreshToken, Duration.ofMillis(jwtTokenProvider.getRefreshTokenValidityMs()));
-
-        response.addHeader(HttpHeaders.SET_COOKIE, authCookieFactory.accessTokenCookie(accessToken, rememberMe).toString());
-        response.addHeader(HttpHeaders.SET_COOKIE, authCookieFactory.refreshTokenCookie(refreshToken, rememberMe).toString());
         response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from(RememberMeRequestFilter.REMEMBER_ME_COOKIE, "")
                 .httpOnly(true).path("/").maxAge(Duration.ZERO).sameSite("Lax").build().toString());
 

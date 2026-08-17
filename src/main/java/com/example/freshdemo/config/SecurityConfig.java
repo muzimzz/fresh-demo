@@ -4,9 +4,7 @@ import com.example.freshdemo.common.auth.jwt.AccessTokenValidAfterRepository;
 import com.example.freshdemo.common.auth.jwt.JwtAuthenticationFilter;
 import com.example.freshdemo.common.auth.jwt.JwtTokenProvider;
 import com.example.freshdemo.common.auth.jwt.RememberMeRequestFilter;
-import com.example.freshdemo.member.domain.oauth.OAuth2LoginFailureHandler;
-import com.example.freshdemo.member.domain.oauth.OAuth2LoginSuccessHandler;
-import com.example.freshdemo.member.domain.oauth.CustomOidcUserService;
+import com.example.freshdemo.member.MemberOAuth2LoginConfigurer;
 import jakarta.servlet.DispatcherType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -40,16 +38,21 @@ import org.springframework.web.servlet.HandlerExceptionResolver;
  * HandlerExceptionResolver로 다시 MVC 예외 처리(GlobalExceptionHandler)에 위임한다 — 그래서 그
  * 두 클래스는 삭제하고 이 방식으로 바꿨다(GlobalExceptionHandler의 AuthenticationException/
  * AccessDeniedException 핸들러가 대신 응답을 만든다).
+ *
+ * [LG-fm 컨벤션 리팩토링 2차] CustomOidcUserService/OAuth2LoginSuccessHandler/
+ * OAuth2LoginFailureHandler(전부 member.domain.oauth 소속)를 여기서 직접 필드로 주입받던 것을
+ * member.MemberOAuth2LoginConfigurer 하나로 대체했다 — config가 도메인 내부(domain 하위)를
+ * 직접 알면 안 된다는 원칙(common_은_도메인을_모른다) 때문이다. 실제 OAuth2 로그인 처리 로직은
+ * 전혀 안 바꿨고, "누가 그 셋을 필터체인에 조립해 꽂느냐"만 member.domain 안의
+ * MemberOAuth2LoginConfigurerImpl로 옮겼다.
  */
 @Configuration
 @RequiredArgsConstructor
 public class SecurityConfig {
 
-    private final CustomOidcUserService customOidcUserService;
     private final JwtTokenProvider jwtTokenProvider;
     private final AccessTokenValidAfterRepository accessTokenValidAfterRepository;
-    private final OAuth2LoginSuccessHandler oAuth2LoginSuccessHandler;
-    private final OAuth2LoginFailureHandler oAuth2LoginFailureHandler;
+    private final MemberOAuth2LoginConfigurer memberOAuth2LoginConfigurer;
 
     @Qualifier("handlerExceptionResolver")
     private final HandlerExceptionResolver handlerExceptionResolver;
@@ -82,12 +85,7 @@ public class SecurityConfig {
                                 handlerExceptionResolver.resolveException(request, response, null, accessDeniedException))
                 )
 
-                .oauth2Login(oauth2 -> oauth2
-                        .userInfoEndpoint(userInfo -> userInfo
-                                .oidcUserService(customOidcUserService))
-                        .successHandler(oAuth2LoginSuccessHandler)
-                        .failureHandler(oAuth2LoginFailureHandler)
-                )
+                .oauth2Login(memberOAuth2LoginConfigurer::configure)
 
                 .addFilterBefore(
                         new JwtAuthenticationFilter(jwtTokenProvider, accessTokenValidAfterRepository),
@@ -102,10 +100,13 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                         .requestMatchers(
-                                "/", "/login/**", "/oauth2/**", "/auth/reissue",
+                                "/", "/login/**", "/oauth2/**",
                                 "/webhook/kakao/unlink" // 카카오가 호출하는 웹훅 — 인증 쿠키 없이 들어옴
                         ).permitAll()
-                        .requestMatchers(HttpMethod.POST, "/admin/login").permitAll()
+                        // [LG-fm 컨벤션 리팩토링 3차] common.auth.AuthController 하나가 갖고 있던
+                        // "/auth/reissue"가 회원/관리자용 컨트롤러로 쪼개지면서 경로도 나뉘었다.
+                        // access token이 만료된 상태로 오는 요청이라 인증 없이 permitAll이어야 한다.
+                        .requestMatchers(HttpMethod.POST, "/members/reissue", "/admin/reissue", "/admin/login").permitAll()
                         // 계정 발급/삭제는 SUPER_ADMIN 전용 — 일반 ADMIN 매처보다 먼저 와야 함
                         .requestMatchers(HttpMethod.POST, "/admin").hasAuthority("ROLE_SUPER_ADMIN")
                         .requestMatchers(HttpMethod.DELETE, "/admin/**").hasAuthority("ROLE_SUPER_ADMIN")

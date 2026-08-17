@@ -58,6 +58,12 @@ dependencies {
     annotationProcessor 'org.projectlombok:lombok'
     testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
     testImplementation 'org.springframework.security:spring-security-test'
+
+    // ArchitectureTest.java(이식 검증용, fm-backend에서 임시로 가져온 사본) 실행용.
+    // 커버리지 게이트(JaCoCo)는 의도적으로 같이 안 가져왔다 — 서비스 단위 테스트가 아직 없어서
+    // 붙이면 이 검증과 무관한 이유로 바로 실패한다.
+    testImplementation 'com.tngtech.archunit:archunit-junit5:1.4.1'
+
     testCompileOnly 'org.projectlombok:lombok'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     testAnnotationProcessor 'org.projectlombok:lombok'

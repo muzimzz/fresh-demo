@@ -5,8 +5,7 @@ import com.example.freshdemo.member.domain.entity.SocialType;
 import com.example.freshdemo.member.domain.repository.MemberRepository;
 import com.example.freshdemo.member.exception.MemberErrorCode;
 import com.example.freshdemo.member.exception.MemberException;
-import com.example.freshdemo.membergrade.domain.entity.MemberGrade;
-import com.example.freshdemo.membergrade.domain.repository.MemberGradeRepository;
+import com.example.freshdemo.membergrade.MemberGradeApi;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +24,10 @@ import org.springframework.transaction.annotation.Transactional;
  * 이 클래스는 인증 어댑터라 domain.service보다 domain.oauth가 더 맞는다고 판단해 별도 하위
  * 패키지로 뒀다 — LG-fm 빌드 게이트를 그대로 가져온다면 커버리지 측정 대상(*.domain.service.*)에서
  * 빠진다는 뜻이라 향후 논의 필요.
+ *
+ * [LG-fm 컨벤션 리팩토링 2차] 기본 등급 조회를 membergrade.domain.repository.MemberGradeRepository
+ * 직접 참조에서 membergrade.MemberGradeApi 경유로 바꿨다 — 도메인 내부(domain 하위)는 다른
+ * 도메인에 닫혀 있어야 한다는 규칙(ArchUnit 도메인_내부는_다른_도메인에_닫혀_있다) 때문이다.
  */
 @Slf4j
 @Service
@@ -32,7 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class CustomOidcUserService extends OidcUserService {
 
     private final MemberRepository memberRepository;
-    private final MemberGradeRepository memberGradeRepository;
+    private final MemberGradeApi memberGradeApi;
 
     @Override
     @Transactional
@@ -62,8 +65,7 @@ public class CustomOidcUserService extends OidcUserService {
             member = optionalMember.get();
         } else {
             try {
-                Long defaultGradeId = memberGradeRepository.findByIsDefaultTrue()
-                        .map(MemberGrade::getId)
+                Long defaultGradeId = memberGradeApi.findDefaultGradeId()
                         .orElseThrow(() -> new MemberException(MemberErrorCode.DEFAULT_MEMBER_GRADE_NOT_FOUND));
                 member = memberRepository.saveAndFlush(attrs.toEntity(defaultGradeId));
             } catch (DataIntegrityViolationException e) {

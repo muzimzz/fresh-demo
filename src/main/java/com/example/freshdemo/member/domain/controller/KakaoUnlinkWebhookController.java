@@ -1,4 +1,4 @@
-package com.example.freshdemo.member;
+package com.example.freshdemo.member.domain.controller;
 
 import com.example.freshdemo.common.logging.PiiMasker;
 import com.example.freshdemo.member.domain.service.MemberWithdrawalService;
@@ -13,11 +13,16 @@ import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-/** 카카오 연결 해제 웹훅 — 응답은 항상 200이어야 하는 카카오 스펙이라 ResponseEnvelope를 쓰지 않는다. */
+/**
+ * 카카오 연결 해제 웹훅 — 응답은 항상 200이어야 하는 카카오 스펙이라 ResponseEnvelope를 쓰지 않는다.
+ * [LG-fm 컨벤션 리팩토링 2차] member(도메인 루트) -> member.domain.controller로 이동,
+ * public -> package-private (MemberController와 같은 이유). 도메인 밖에서 이 클래스를 직접
+ * 참조하는 곳은 없고 Spring이 요청을 라우팅할 뿐이라 package-private이어도 문제없다.
+ */
 @Slf4j
 @RestController
 @RequiredArgsConstructor
-public class KakaoUnlinkWebhookController {
+class KakaoUnlinkWebhookController {
 
     private final MemberWithdrawalService memberWithdrawalService;
 

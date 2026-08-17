@@ -1,31 +1,25 @@
 package com.example.freshdemo.common.auth.jwt;
 
-import com.example.freshdemo.admin.domain.repository.AdminRepository;
-import com.example.freshdemo.member.domain.repository.MemberRepository;
 import java.time.Duration;
-import java.time.LocalDateTime;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ClassPathResource;
-import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Refresh Token 저장소. key = "refreshToken:{role}:{id}". Redis를 1차 저장소로, DB 백업은
- * Member/Admin 행 자체의 refreshTokenHash/refreshTokenExpiresAt에 write-through로 남긴다.
+ * Refresh Token 저장소. key = "refreshToken:{role}:{id}". 순수 Redis 저장소 — Member/Admin을
+ * 전혀 모른다. Redis 장애 시 DataAccessException을 그대로 던지며, DB 백업/폴백은 호출자(도메인
+ * 소유의 ~TokenService)의 책임이다.
  *
- * [LG-fm 컨벤션 리팩토링] common.auth.jwt로 이동. 이 클래스는 common(공용 인프라) 소속이면서
- * member/admin 두 도메인의 domain.repository를 직접 의존한다 — "인증 인프라는 common.auth에
- * 둔다"는 이번 리팩토링의 방침을 따르기 위한 선택이고, 도메인 경계 원칙과는 긴장이 있다는 점을
- * DESIGN_NOTES.md에 기록해 둔다(다음 라운드에 포트-어댑터로 역전시킬지, auth를 독립 도메인으로
- * 승격할지 검토 필요).
+ * [LG-fm 컨벤션 리팩토링 3차] 순환_의존이_없다 ArchUnit 위반 해소: 예전엔 이 클래스가
+ * MemberAuthApi/AdminAuthApi를 거쳐 DB 백업 write-through까지 직접 오케스트레이션했다
+ * (common→member/admin 엣지의 원인 중 하나). 이제 그 오케스트레이션(DB 백업 저장/삭제/CAS
+ * 폴백)은 member.domain.service.MemberTokenService / admin.domain.service.AdminTokenService로
+ * 옮겼고, 이 클래스는 Redis 원자적 CAS(compareAndSave)와 단순 저장/삭제만 담당한다.
  */
-@Slf4j
 @Repository
 @RequiredArgsConstructor
 public class RefreshTokenRepository {
@@ -42,90 +36,26 @@ public class RefreshTokenRepository {
     }
 
     private final StringRedisTemplate redisTemplate;
-    private final MemberRepository memberRepository;
-    private final AdminRepository adminRepository;
 
-    @Transactional
-    public void save(TokenType type, String role, Long id, String refreshToken, Duration ttl) {
-        String tokenHash = TokenHasher.sha256(refreshToken);
-        trySaveBackup(type, id, tokenHash, LocalDateTime.now().plus(ttl));
-
-        try {
-            redisTemplate.opsForValue().set(key(role, id), tokenHash, ttl);
-        } catch (DataAccessException e) {
-            log.warn("event=REDIS_SAVE_FAILED role={} id={} — DB 백업만 반영됨", role, id, e);
-        }
+    public void save(String role, Long id, String refreshToken, Duration ttl) {
+        redisTemplate.opsForValue().set(key(role, id), TokenHasher.sha256(refreshToken), ttl);
     }
 
-    @Transactional
-    public void delete(TokenType type, String role, Long id) {
-        try {
-            clearBackup(type, id);
-        } catch (DataAccessException e) {
-            log.warn("event=DB_BACKUP_DELETE_FAILED role={} id={} — DB 백업 삭제 실패(로그아웃/삭제 자체는 계속 진행)", role, id, e);
-        }
-        try {
-            redisTemplate.delete(key(role, id));
-        } catch (DataAccessException e) {
-            log.warn("event=REDIS_DELETE_FAILED role={} id={} — DB 백업만 반영됨", role, id, e);
-        }
+    public void delete(String role, Long id) {
+        redisTemplate.delete(key(role, id));
     }
 
-    @Transactional
-    public boolean compareAndSave(TokenType type, String role, Long id, String oldRefreshToken, String newRefreshToken, Duration ttl) {
-        LocalDateTime expiresAt = LocalDateTime.now().plus(ttl);
+    /** @return true면 회전 성공(원자적 compare-and-set), false면 저장된 값과 불일치(재사용 의심). */
+    public boolean compareAndSave(String role, Long id, String oldRefreshToken, String newRefreshToken, Duration ttl) {
         String oldHash = TokenHasher.sha256(oldRefreshToken);
         String newHash = TokenHasher.sha256(newRefreshToken);
 
-        try {
-            Long result = redisTemplate.execute(
-                    COMPARE_AND_SAVE_SCRIPT,
-                    List.of(key(role, id)),
-                    oldHash, newHash, String.valueOf(ttl.toMillis())
-            );
-            boolean rotated = result != null && result == 1L;
-            if (rotated) {
-                trySaveBackup(type, id, newHash, expiresAt);
-            }
-            return rotated;
-        } catch (DataAccessException e) {
-            log.warn("event=REDIS_CAS_FAILED role={} id={} — DB CAS로 폴백", role, id, e);
-            int updated = compareAndSetBackup(type, id, oldHash, newHash, expiresAt);
-            return updated > 0;
-        }
-    }
-
-    private void trySaveBackup(TokenType type, Long id, String tokenHash, LocalDateTime expiresAt) {
-        try {
-            int updated = updateBackup(type, id, tokenHash, expiresAt);
-            if (updated == 0) {
-                log.warn("event=DB_BACKUP_SAVE_SKIPPED type={} id={} — 대상 행을 찾지 못함", type, id);
-            }
-        } catch (DataAccessException e) {
-            log.warn("event=DB_BACKUP_SAVE_FAILED type={} id={} — Redis만 반영됨(DB 백업 유실 가능, 다음 쓰기 때 다시 시도됨)",
-                    type, id, e);
-        }
-    }
-
-    private int updateBackup(TokenType type, Long id, String tokenHash, LocalDateTime expiresAt) {
-        return switch (type) {
-            case MEMBER -> memberRepository.updateRefreshToken(id, tokenHash, expiresAt);
-            case ADMIN -> adminRepository.updateRefreshToken(id, tokenHash, expiresAt);
-        };
-    }
-
-    private void clearBackup(TokenType type, Long id) {
-        switch (type) {
-            case MEMBER -> memberRepository.clearRefreshToken(id);
-            case ADMIN -> adminRepository.clearRefreshToken(id);
-        }
-    }
-
-    private int compareAndSetBackup(TokenType type, Long id, String oldHash, String newHash, LocalDateTime expiresAt) {
-        return switch (type) {
-            case MEMBER -> memberRepository.compareAndSetRefreshToken(id, oldHash, newHash, expiresAt);
-            case ADMIN -> adminRepository.compareAndSetRefreshToken(id, oldHash, newHash, expiresAt);
-        };
+        Long result = redisTemplate.execute(
+                COMPARE_AND_SAVE_SCRIPT,
+                List.of(key(role, id)),
+                oldHash, newHash, String.valueOf(ttl.toMillis())
+        );
+        return result != null && result == 1L;
     }
 
     private String key(String role, Long id) {

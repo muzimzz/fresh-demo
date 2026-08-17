@@ -69,8 +69,10 @@
 | `POST /admin/login` | ✅허용 | ✅허용(무의미) | ✅허용(무의미) | ✅허용(무의미) |
 | `POST /admin` (계정발급) | 401 | 403 | 403 | ✅허용 |
 | `DELETE /admin/{id}` | 401 | 403 | 403 | ✅허용 |
-| `POST /auth/reissue` | ✅허용(쿠키기반) | ✅허용 | ✅허용 | ✅허용 |
-| `POST /auth/logout` | 401 | ✅허용 | ✅허용(자기 세션만) | ✅허용(자기 세션만) |
+| `POST /members/reissue` | ✅허용(쿠키기반) | ✅허용 | 401(refreshToken의 type이 MEMBER 아님) | 401(위와 동일) |
+| `POST /admin/reissue` | ✅허용(쿠키기반) | 401(refreshToken의 type이 ADMIN 아님) | ✅허용 | ✅허용 |
+| `POST /members/logout` | 401 | ✅허용 | 403(TYPE_MEMBER 아님) | 403(TYPE_MEMBER 아님) |
+| `POST /admin/logout` | 401 | 403 | ✅허용(자기 세션만) | ✅허용(자기 세션만) |
 | `GET/POST /webhook/kakao/unlink` | ✅허용(자체 서명 검증) | - | - | - |
 | `PATCH /members/me/onboarding` | 401 | ✅허용 | ⚠️허용 — `MEMBER_NOT_FOUND`(400)로 끝나긴 함, 하지만 `type` 체크가 없어서 통과되는 건 우연 | ⚠️허용 — 위와 동일 |
 | `DELETE /members/me` | 401 | ✅허용 | ⚠️허용 — `MEMBER_NOT_FOUND`(400)로 끝남, 위와 동일 이유 | ⚠️허용 |

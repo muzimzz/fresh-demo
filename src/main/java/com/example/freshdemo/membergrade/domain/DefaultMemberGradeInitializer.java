@@ -1,4 +1,4 @@
-package com.example.freshdemo.membergrade.domain.service;
+package com.example.freshdemo.membergrade.domain;
 
 import com.example.freshdemo.membergrade.domain.entity.MemberGrade;
 import com.example.freshdemo.membergrade.domain.repository.MemberGradeRepository;
@@ -15,6 +15,8 @@ import org.springframework.transaction.annotation.Transactional;
  * Flyway 같은 마이그레이션 도구가 없어(ddl-auto:update) 기동 시점에 확인해 없으면 만들어준다.
  *
  * [LG-fm 컨벤션 리팩토링] membergrade.domain.service로 패키지만 이동, 로직 무변경.
+ * [ArchUnit 대응] membergrade.domain.service -> membergrade.domain으로 재이동. 기동 시
+ * 시드하는 초기화기라 서비스가 아니고, domain.service 패키지(커버리지 100% 대상)에 있으면 안 된다.
  */
 @Slf4j
 @Component

@@ -1,7 +1,7 @@
-package com.example.freshdemo.admin;
+package com.example.freshdemo.admin.domain.controller;
 
+import com.example.freshdemo.admin.domain.AdminRegistrationResult;
 import com.example.freshdemo.admin.domain.entity.Admin;
-import com.example.freshdemo.admin.domain.service.AdminRegistrationResult;
 import com.example.freshdemo.admin.domain.service.AdminService;
 import com.example.freshdemo.admin.dto.AdminLoginRequest;
 import com.example.freshdemo.admin.dto.AdminLoginResponse;
@@ -24,11 +24,17 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** 관리자 로그인 / 계정 발급·삭제(SUPER_ADMIN 전용) / 본인 비밀번호 변경 API. 실제 경로 /api/admin/**. */
+/**
+ * 관리자 로그인 / 계정 발급·삭제(SUPER_ADMIN 전용) / 본인 비밀번호 변경 API. 실제 경로 /api/admin/**.
+ *
+ * [LG-fm 컨벤션 리팩토링 2차] admin(도메인 루트) -> admin.domain.controller로 이동,
+ * public -> package-private. domain-package-boundary-guideline.md 원칙상 도메인 루트에는
+ * ~Api 인터페이스/공개 DTO(record)/공개 예외만 두고 Controller는 domain 하위에 둬야 한다.
+ */
 @RestController
 @RequestMapping("/admin")
 @RequiredArgsConstructor
-public class AdminController {
+class AdminController {
 
     private final AdminService adminService;
 

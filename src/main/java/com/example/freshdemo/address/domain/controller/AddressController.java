@@ -1,4 +1,4 @@
-package com.example.freshdemo.address;
+package com.example.freshdemo.address.domain.controller;
 
 import com.example.freshdemo.address.domain.entity.Address;
 import com.example.freshdemo.address.domain.service.AddressService;
@@ -21,11 +21,16 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** 회원 배송지 API. 실제 경로 /api/addresses/**. */
+/**
+ * 회원 배송지 API. 실제 경로 /api/addresses/**.
+ *
+ * [LG-fm 컨벤션 리팩토링 2차] address(도메인 루트) -> address.domain.controller로 이동,
+ * public -> package-private (MemberController와 같은 이유).
+ */
 @RestController
 @RequestMapping("/addresses")
 @RequiredArgsConstructor
-public class AddressController {
+class AddressController {
 
     private final AddressService addressService;
 

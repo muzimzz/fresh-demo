@@ -1,5 +1,7 @@
 package com.example.freshdemo.admin.domain.service;
 
+import com.example.freshdemo.admin.domain.AdminRegistrationResult;
+import com.example.freshdemo.admin.domain.TempPasswordGenerator;
 import com.example.freshdemo.admin.domain.entity.Admin;
 import com.example.freshdemo.admin.domain.entity.AdminRole;
 import com.example.freshdemo.admin.domain.entity.AdminStatus;
@@ -7,18 +9,10 @@ import com.example.freshdemo.admin.domain.repository.AdminRepository;
 import com.example.freshdemo.admin.dto.AdminRegisterRequest;
 import com.example.freshdemo.admin.exception.AdminErrorCode;
 import com.example.freshdemo.admin.exception.AdminException;
-import com.example.freshdemo.common.auth.AuthCookieFactory;
-import com.example.freshdemo.common.auth.jwt.AccessTokenValidAfterRepository;
-import com.example.freshdemo.common.auth.jwt.JwtTokenProvider;
-import com.example.freshdemo.common.auth.jwt.RefreshTokenRepository;
-import com.example.freshdemo.common.auth.jwt.TokenType;
 import jakarta.servlet.http.HttpServletResponse;
-import java.time.Duration;
-import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.http.HttpHeaders;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,6 +24,10 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * [LG-fm 컨벤션 리팩토링] admin.domain.service로 이동, common.auth.jwt 패키지 경로, 예외 타입,
  * Admin.register() 팩토리 호출만 변경. 로직 무변경.
+ *
+ * [LG-fm 컨벤션 리팩토링 3차] 순환_의존이_없다 대응: JwtTokenProvider/RefreshTokenRepository/
+ * AccessTokenValidAfterRepository/AuthCookieFactory 직접 호출을 전부 AdminTokenService로
+ * 옮겼다. 토큰 관련 로직 자체는 무변경 — 호출 위치만 바뀌었다.
  */
 @Slf4j
 @Service
@@ -38,12 +36,9 @@ public class AdminService {
 
     private final AdminRepository adminRepository;
     private final PasswordEncoder passwordEncoder;
-    private final JwtTokenProvider jwtTokenProvider;
-    private final RefreshTokenRepository refreshTokenRepository;
-    private final AccessTokenValidAfterRepository accessTokenValidAfterRepository;
-    private final AuthCookieFactory authCookieFactory;
+    private final AdminTokenService adminTokenService;
 
-    @Transactional(readOnly = true)
+    @Transactional
     public Admin login(String loginId, String rawPassword, HttpServletResponse response) {
         Admin admin = adminRepository.findByLoginId(loginId)
                 .orElseThrow(() -> {
@@ -61,19 +56,9 @@ public class AdminService {
             throw new AdminException(AdminErrorCode.INVALID_PASSWORD);
         }
 
-        String roleAuthority = admin.getRole().toAuthority();
-        Long adminId = admin.getId();
+        adminTokenService.issue(admin, response);
 
-        String accessToken = jwtTokenProvider.createAccessToken(adminId, TokenType.ADMIN, roleAuthority);
-        String refreshToken = jwtTokenProvider.createRefreshToken(adminId, TokenType.ADMIN, roleAuthority, true);
-
-        refreshTokenRepository.save(TokenType.ADMIN, roleAuthority, adminId, refreshToken,
-                Duration.ofMillis(jwtTokenProvider.getRefreshTokenValidityMs()));
-
-        response.addHeader(HttpHeaders.SET_COOKIE, authCookieFactory.accessTokenCookie(accessToken, true).toString());
-        response.addHeader(HttpHeaders.SET_COOKIE, authCookieFactory.refreshTokenCookie(refreshToken, true).toString());
-
-        log.info("event=ADMIN_LOGIN_SUCCESS adminId={}", adminId);
+        log.info("event=ADMIN_LOGIN_SUCCESS adminId={}", admin.getId());
         return admin;
     }
 
@@ -118,11 +103,7 @@ public class AdminService {
 
         admin.changePassword(passwordEncoder.encode(newPassword));
 
-        String roleAuthority = admin.getRole().toAuthority();
-        refreshTokenRepository.delete(TokenType.ADMIN, roleAuthority, adminId);
-        accessTokenValidAfterRepository.invalidateBefore(
-                roleAuthority, adminId, LocalDateTime.now(),
-                Duration.ofMillis(jwtTokenProvider.getAccessTokenValidityMs()));
+        adminTokenService.revoke(adminId, admin.getRole().toAuthority());
 
         log.info("event=ADMIN_PASSWORD_CHANGED adminId={}", adminId);
     }
@@ -154,12 +135,7 @@ public class AdminService {
 
         target.delete();
 
-        String targetRole = target.getRole().toAuthority();
-
-        refreshTokenRepository.delete(TokenType.ADMIN, targetRole, target.getId());
-        accessTokenValidAfterRepository.invalidateBefore(
-                targetRole, target.getId(), LocalDateTime.now(),
-                Duration.ofMillis(jwtTokenProvider.getAccessTokenValidityMs()));
+        adminTokenService.revoke(target.getId(), target.getRole().toAuthority());
 
         log.info("event=ADMIN_DELETED actorId={} targetId={}", requesterId, targetAdminId);
     }

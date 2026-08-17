@@ -38,4 +38,4 @@ out/
 
 ### 환경/비밀 ###
 .env
-application-secret.yaml
+/application-secret.yaml

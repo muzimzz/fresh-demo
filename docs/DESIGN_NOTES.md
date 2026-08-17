@@ -250,3 +250,158 @@
   패키지 재배치 후 남은 참조는 `grep`으로 전수 확인했다(구 패키지 경로, `ApiResponse`/`ResponseCode`
   잔존, `LongMutableBaseEntity` 상속 잔존 등 전부 클린 확인). 로컬에서 `./gradlew compileJava`를
   가장 먼저 돌려볼 것.
+
+## 13. LG-fm 2차 pull 이후 — 도메인 경계 강제(ArchUnit) 대응
+
+fm-backend를 다시 받은 뒤(조직/저장소가 `LGU-2/backend` → `fresh-market/fm-backend`로
+개명됨, 코드 영향 없음) 확인해보니 팀원 도메인 코드는 아직 없고(`common`/`config`만 존재),
+대신 `ArchitectureTest.java`(ArchUnit)가 새로 추가되어 `./gradlew check`에 물렸다. 이 테스트가
+강제하는 `domain-package-boundary-guideline.md`의 규칙 자체는 이전 pull 시점에도 이미 문서로
+존재했지만(§12 작성 당시엔 "도메인 루트 = 컨트롤러+DTO+예외"로 잘못 단순화해서 반영함), 이제
+빌드 게이트로 자동 강제되므로 fresh-demo v1의 구조가 실제로 이 규칙을 지키는지 다시 대조하고
+아래 3곳을 고쳤다.
+
+**핵심 원칙 재확인**: 도메인 루트에는 `~Api` 인터페이스(공개 창구) + 공개 DTO(record) + 공개
+예외만 둔다. 그 외 전부(엔티티/리포지토리/서비스/**컨트롤러**/내부 DTO/내부 예외)는 `domain`
+하위로 내린다. 다른 도메인은 오직 이 루트의 `~Api`를 통해서만 서로를 호출할 수 있다
+(ArchUnit `도메인_내부는_다른_도메인에_닫혀_있다`). `common`/`config`는 어떤 도메인의
+`domain` 패키지도 알아서는 안 된다(`common_은_도메인을_모른다`).
+
+- ✅ **Controller를 도메인 루트 → `domain.controller`로 재이동, `public` → package-private.**
+  `MemberController`/`MemberWithdrawalController`/`KakaoUnlinkWebhookController`/
+  `AdminController`/`AddressController` 5개 전부 이동. 컨트롤러는 어떤 계층에서도 호출되지
+  않는 진입점(`layeredArchitecture().whereLayer("Controller").mayNotBeAccessedByAnyLayer()`)이라
+  "다른 도메인에 공개하는 계약"이 아니고, `rootIsContractOnly` 규칙상 도메인 루트에는
+  interface/record/예외만 있어야 해서 애초에 루트에 있으면 안 되는 클래스였다.
+  `common.auth.AuthController`는 domain-package-boundary 규칙 적용 대상이 아닌 `common` 소속이라
+  위치는 그대로 두고 `public`도 유지했다(공용 인프라 컨트롤러라 특정 도메인 소유가 아님).
+- ✅ **`membergrade.MemberGradeApi` 신설.** `member.domain.oauth.CustomOidcUserService`가
+  회원가입 시 기본 등급을 찾으려고 `membergrade.domain.repository.MemberGradeRepository`를
+  직접 참조하던 것을 도메인 경계 위반으로 판단, 도메인 루트에 `MemberGradeApi`
+  (`findDefaultGradeId(): Optional<Long>`) 인터페이스와 `membergrade.domain.MemberGradeApiImpl`
+  (package-private) 구현체를 추가하고 `CustomOidcUserService`가 이걸 경유하도록 바꿨다.
+- ✅ **`common.auth` → `member`/`admin` 직접 의존 제거.** `common.auth.jwt.RefreshTokenRepository`와
+  `common.auth.AuthController`가 `MemberRepository`/`AdminRepository`(그리고 `Member`/`Admin`
+  엔티티, `MemberException`/`AdminException`, `KakaoLogoutClient`)를 직접 참조하던 것을
+  `member.MemberAuthApi`/`admin.AdminAuthApi` 경유로 바꿨다.
+  - `MemberAuthApi`: `findAuthInfo`(id/role/withdrawn만 담은 `MemberAuthInfo` record 반환),
+    `updateRefreshToken`/`clearRefreshToken`/`compareAndSetRefreshToken`,
+    `logoutExternalSession`(카카오 로그아웃 포함).
+  - `AdminAuthApi`: `findAuthInfo`(id/authority만 담은 `AdminAuthInfo` record 반환),
+    리프레시 토큰 3종 동일.
+  - `AuthController`의 `reissueMemberRole`/`reissueAdminRole`에서 회원·관리자를 못 찾은 경우
+    기존엔 `MemberException(MEMBER_NOT_FOUND)`/`AdminException(ADMIN_NOT_FOUND)`를 던졌는데,
+    이 컨트롤러가 이미 다른 실패(토큰 무효/재사용 의심)에 `BadCredentialsException`을 쓰고
+    있어 일관성 있게 여기도 `BadCredentialsException`으로 통일했다 — "리프레시 토큰이 가리키는
+    주체가 사라짐"은 도메인 정책 위반이라기보다 인증 실패로 보는 게 이 클래스의 기존 철학과
+    맞는다고 판단. 부수효과로 `common`이 `member.exception`/`admin.exception`도 더는
+    참조하지 않게 됐다.
+  - **트랜잭션 경계**: ArchUnit이 `~ApiImpl`에 `@Transactional`을 금지하므로(`ApiImpl_에_
+    트랜잭션이_없다`) `MemberAuthApiImpl`/`AdminAuthApiImpl`은 트랜잭션을 직접 열지 않는다.
+    대신 호출자인 `RefreshTokenRepository`의 `save`/`delete`/`compareAndSave`가 그대로
+    `@Transactional`을 유지하고 있어서, 그 경계 안에서 Api 메서드가 호출되며 내부
+    `MemberRepository`/`AdminRepository`의 `@Modifying` 쿼리가 자연스럽게 합류한다. 별도
+    `domain.service` 클래스를 새로 만들지 않은 이유이기도 하다(JaCoCo 100% 게이트 대상을
+    늘리지 않기 위함 — 어차피 이번 라운드엔 그 게이트를 적용 안 하기로 했지만).
+- ✅ **`config.SecurityConfig` → `member.domain.oauth.*` 직접 참조 제거.** 처음엔
+  `common.auth.oauth`로 이전 3개 클래스를 통째로 옮기고 `CustomOidcUser`가 든 `Member` 엔티티를
+  DTO로 바꾸는 안을 검토했는데, 그건 로그인 흐름의 데이터 모델까지 바꾸는 과한 수정이라 접었다.
+  실제 위반 지점은 "`config`가 `CustomOidcUserService`/`OAuth2LoginSuccessHandler`/
+  `OAuth2LoginFailureHandler` 3개를 필터체인에 조립해 꽂아야 한다"는 것 하나뿐이고, 이 3개
+  클래스 자체는 `member.domain.oauth` 안에 있는 게 맞다(같은 도메인 내부에서 `Member` 엔티티를
+  쓰는 것도 정상). 그래서 "조립하는 책임"만 `member.MemberOAuth2LoginConfigurer`(도메인 루트
+  인터페이스, 메서드 하나: `configure(OAuth2LoginConfigurer<HttpSecurity>)`)로 뽑고
+  `member.domain.MemberOAuth2LoginConfigurerImpl`(package-private)이 기존 3개 필드를 그대로
+  들고 조립하게 했다. `SecurityConfig`는 이제 `MemberOAuth2LoginConfigurer` 하나만 주입받고
+  `.oauth2Login(memberOAuth2LoginConfigurer::configure)` 한 줄로 끝난다. 로그인 로직 자체는
+  전혀 안 바뀌었다 — `MemberAuthApi`/`AdminAuthApi`/`MemberGradeApi`와 같은 패턴(도메인 루트=
+  인터페이스, `domain` 안=package-private 구현체)을 "OAuth2 필터체인 설정"에도 그대로 적용한
+  것뿐이다.
+- 이번에도 `./gradlew compileJava`/`check`는 실행하지 못했다 — 이 세션의 샌드박스가
+  `services.gradle.org`에 접근할 네트워크 경로가 없어 Gradle wrapper가 배포판을 못 받는다.
+  대신 아래를 grep으로 전수 확인했다: (1) 옛 컨트롤러 경로(`member.MemberController` 등) 잔존
+  참조 없음, (2) `member`/`admin`/`address` 도메인 루트에 인터페이스/record 외의 클래스 없음,
+  (3) `common`이 실제 코드에서 `*.domain.*`을 참조하는 곳 없음(SecurityConfig의 `config` 소속
+  참조는 위에 별도 기재), (4) `membergrade.domain.*`를 membergrade 밖에서 참조하는 곳 없음,
+  (5) 이동된 컨트롤러 5개 전부 package-private 확인. 로컬 환경에서 `./gradlew compileJava`와
+  (팀 저장소에 이 구조를 반영한 뒤) `./gradlew check`를 가장 먼저 돌려볼 것.
+
+## 14. 실제 로컬 빌드/테스트 이후 — `서비스_이름` / `순환_의존이_없다` 위반 대응
+
+§13을 반영한 뒤 사용자 로컬 환경(자체 MySQL, `application-secret.yaml`)에서 처음으로
+`./gradlew build`가 실제로 통과했다. 이어서 `ArchitectureTest`를 가져와 `./gradlew test`를
+직접 돌려보니 §13에서 grep만으로는 못 잡은 위반 2개가 추가로 드러났다.
+
+### 14.1 `서비스_이름` — 도메인 루트로 이동한 클래스 5개의 위치 정정
+
+`서비스_이름` 규칙(`domain.service` 하위 클래스는 이름이 `~Service`로 끝나야 함)을
+`AdminRegistrationResult`, `TempPasswordGenerator`, `KakaoUnlinkEventListener`,
+`MemberWithdrawalEvent`, `DefaultMemberGradeInitializer` 5개가 위반했다 — 전부
+`domain.service` 패키지에 있었지만 `~Service`로 안 끝나는 이름들이었다(각각 결과 DTO, 유틸,
+이벤트 리스너, 이벤트, 초기화 컴포넌트). 5개 전부 한 단계 위 `domain` 루트로 옮겼다(예:
+`admin.domain.service.AdminRegistrationResult` → `admin.domain.AdminRegistrationResult`).
+`TempPasswordGenerator`는 `AdminService`(여전히 `domain.service`에 있음)가 다른 패키지에서
+호출해야 해서 `public`으로 가시성을 넓혔다.
+
+### 14.2 `순환_의존이_없다` — `common`↔`member`/`admin` 양방향 의존 해소
+
+**증상**: ArchUnit의 `slices()`가 최상위 패키지(`common`, `member`, `admin`, …) 단위로
+슬라이스를 나누는데, `common`이 `MemberAuthApi`/`AdminAuthApi`를 경유해 `member`/`admin`을
+참조하는 동시에(§13에서 만든 구조), `member`/`admin`의 여러 서비스가 로그인/재발급/로그아웃/
+탈퇴/비밀번호변경 때 `common.auth.jwt.*`를 직접 호출하고 있어서 양방향 엣지가 생겼다 —
+`beFreeOfCycles()`가 이걸 사이클로 잡는다.
+
+**검토한 대안 3가지**(사용자 승인 전까지 파일 수정 없이 먼저 제시):
+1. ArchUnit 예외로 인정하고 넘어간다 — 가장 쉽지만 "인증 인프라는 어차피 여러 도메인이 같이
+   써야 한다"는 근본 긴장을 안 풀고 덮기만 함.
+2. 포트-어댑터(의존성 역전) — `common`이 도메인을 향해 인터페이스를 만들고 어댑터를 어디에
+   두느냐에 따라 완전히 안 풀릴 수도 있음이 검토 중에 드러남(아래 참고).
+3. **이벤트 기반** — 가장 근본적이지만 변경 범위가 가장 큼.
+
+**처음에 놓쳤던 것**: 옵션 2를 "새 어댑터 인터페이스 2개만 추가하면 된다"고 처음 제안했는데,
+실제 호출부 3곳(`MemberWithdrawalService`, `OAuth2LoginSuccessHandler`, `AdminService`)을
+전부 읽어본 뒤 `common.auth.AuthController`/`RefreshTokenRepository` 자체가 회원·관리자
+공용 재발급/로그아웃 로직을 갖고 있는 한 그 클래스들이 `MemberAuthApi`/`AdminAuthApi`(또는
+이름만 바뀐 어떤 인터페이스든)를 계속 참조해야 해서, 호출부 3곳을 고쳐도 `common→member`/
+`common→admin` 엣지가 그대로 남는다는 걸 파일을 다시 읽고서야 발견했다. 그래서 구현 전에
+사용자에게 이 점을 정정해서 다시 설명하고 승인을 받았다.
+
+**최종 채택안 — `AuthController` 자체를 도메인별로 분리**:
+
+| | 이전(§13) | 이후(§14) |
+|---|---|---|
+| 재발급/로그아웃 엔드포인트 | `common.auth.AuthController`(회원/관리자 공용, `/auth/reissue`·`/auth/logout`) | `member.domain.controller.MemberAuthController`(`/members/reissue`·`/members/logout`) + `admin.domain.controller.AdminAuthController`(`/admin/reissue`·`/admin/logout`) — 완전히 분리 |
+| `RefreshTokenRepository` | Redis 1차 저장 + `MemberAuthApi`/`AdminAuthApi` 경유 DB 백업까지 오케스트레이션 | **순수 Redis 저장소**(`save`/`delete`/`compareAndSave`만, `role`/`id` 기반 키). `Member`/`Admin`을 전혀 모름 |
+| DB 백업(write-through)/CAS 폴백 오케스트레이션 | `RefreshTokenRepository` 내부(`MemberAuthApi.updateRefreshToken` 등 경유) | `member.domain.service.MemberTokenService` / `admin.domain.service.AdminTokenService`(신설) — 각자 자기 도메인의 `MemberRepository`/`AdminRepository`를 직접 사용(같은 도메인이라 Api 불필요) |
+| `MemberAuthApi`/`AdminAuthApi`(+`MemberAuthInfo`/`AdminAuthInfo`, `~ApiImpl`) | `common` 전용으로 신설(§13) | **완전히 삭제** — `common`이 이제 `member`/`admin`을 아예 몰라서 다리 역할의 Api가 필요 없어짐 |
+| 회원 로그인(카카오)/탈퇴/관리자 로그인/비밀번호변경/계정삭제의 토큰 발급·폐기 | 각 서비스가 `JwtTokenProvider`/`RefreshTokenRepository`/`AccessTokenValidAfterRepository`/`AuthCookieFactory`를 직접 호출 | `MemberTokenService.issue/reissue/revoke`, `AdminTokenService.issue/reissue/revoke` 경유로 통일 |
+
+결과적으로 `common`은 `member`/`admin` 어디도 참조하지 않고(순수 유틸: `JwtTokenProvider`,
+`RefreshTokenRepository`, `AccessTokenValidAfterRepository`, `AuthCookieFactory`,
+`CustomUserDetails`, `TokenHasher`, `TokenType` 등), `member`→`common`·`admin`→`common`
+단방향만 남아 `beFreeOfCycles()`를 만족한다. Redis 장애 시 DB CAS 폴백 등 기존 복원력
+로직은 전부 `~TokenService`로 그대로 옮겨서 동작은 바뀌지 않았다(호출 위치만 이동).
+
+**API 경로 변경(주의)**: `/auth/reissue`·`/auth/logout`이 `/members/reissue`·
+`/members/logout`(회원), `/admin/reissue`·`/admin/logout`(관리자)로 갈라졌다. 프론트/클라
+연동 시 반드시 반영해야 한다. `SecurityConfig`의 permitAll 목록도
+`HttpMethod.POST`로 좁혀서 `/members/reissue`·`/admin/reissue`·`/admin/login`만 인증 없이
+허용하도록 정리했다(기존 `/auth/reissue`는 HTTP 메서드 제한이 없었는데, 실제로 컨트롤러가
+`POST`만 노출하므로 더 좁혀도 안전).
+
+**fresh-market 본 프로젝트 이식 시 참고**: 팀 내에서 회원/관리자 로그인 구현을 다른 사람이
+맡기로 해서, 실제 이식 때는 **회원(`member`) 쪽만 가져가고 관리자(`admin`) 쪽은 제외**할
+예정이다. 즉 `AdminTokenService`/`AdminAuthController`/`AdminService`의 토큰 처리 부분은
+fresh-demo 자체의 로컬 빌드/테스트 완결성을 위해서만 유지하는 것이고, fm-backend에는
+`MemberTokenService`/`MemberAuthController`(그리고 `RefreshTokenRepository`가 순수
+Redis 유틸이 됐다는 설계)만 반영하면 된다 — 관리자 인증을 실제로 어떻게 구현할지는
+그 담당자의 몫이다.
+
+- `서비스_이름`/`순환_의존이_없다` 모두 이번 라운드로 해소했다고 "설계상" 판단했지만, 이번에도
+  `./gradlew test`를 이 세션에서 직접 실행하지 못했다(네트워크 제약으로 Gradle wrapper가
+  배포판을 못 받음, §13과 동일한 사유) — grep으로 (1) 삭제된 클래스(`AuthController`,
+  `MemberAuthApi`/`AdminAuthApi`/`~Info`/`~Impl`) 잔존 참조 없음, (2) `common` 패키지 전체에
+  `member.*`/`admin.*` import 없음, (3) `RefreshTokenRepository`의 새 시그니처(`role, id, ...`,
+  `TokenType` 파라미터 없음)를 호출부 전부가 따르고 있음을 확인했다. **로컬에서
+  `./gradlew test`를 꼭 다시 돌려서 `서비스_이름`/`순환_의존이_없다`/`contextLoads()` 전부
+  통과하는지 확인할 것.**
